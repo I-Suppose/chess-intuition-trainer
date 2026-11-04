@@ -39,8 +39,11 @@ def parse_export(text: str, username: str):
                 return None
         white, black = h.get("White"), h.get("Black")
         colour = "white" if (white or "").casefold() == username.casefold() else "black"
+        result = h.get("Result")
+        user_result = ({"1-0": "win", "0-1": "loss", "1/2-1/2": "draw"}.get(result) if colour == "white"
+                       else {"0-1": "win", "1-0": "loss", "1/2-1/2": "draw"}.get(result))
         games.append({"id": uid or h.get("GameId") or h.get("UTCDate", "unknown") + ":" + (white or "") + ":" + (black or ""),
                       "url": uid or None, "white": white, "black": black, "user_colour": colour,
-                      "opponent": black if colour == "white" else white, "result": h.get("Result"), "played_at": date_value(),
+                      "opponent": black if colour == "white" else white, "result": user_result, "played_at": date_value(),
                       "time_control": h.get("TimeControl"), "opening": h.get("Opening"), "pgn": game.accept(chess.pgn.StringExporter(headers=True, variations=False, comments=False))})
     return games

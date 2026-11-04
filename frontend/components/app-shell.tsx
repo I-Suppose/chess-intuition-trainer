@@ -1,11 +1,11 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Activity, BookOpen, Brain, LayoutDashboard, LogOut, Settings, Swords } from 'lucide-react';
+import { Activity, BookOpen, Brain, GitBranch, LayoutDashboard, LogOut, Settings, Swords } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { ReactNode, useEffect, useState } from 'react';
 
-const links = [{ href:'/dashboard',label:'Overview',icon:LayoutDashboard },{href:'/accounts',label:'Accounts',icon:Swords},{href:'/games',label:'Game library',icon:BookOpen},{href:'/puzzles',label:'Puzzle trainer',icon:Brain},{href:'/settings',label:'Settings',icon:Settings}];
+const links = [{ href:'/dashboard',label:'Overview',icon:LayoutDashboard },{href:'/accounts',label:'Accounts',icon:Swords},{href:'/games',label:'Game library',icon:BookOpen},{href:'/openings',label:'Openings',icon:GitBranch},{href:'/puzzles',label:'Puzzle trainer',icon:Brain},{href:'/settings',label:'Settings',icon:Settings}];
 export default function AppShell({ children, title }: { children:ReactNode; title:string }) {
   const path=usePathname(), router=useRouter(); const [email,setEmail]=useState('');
   useEffect(()=>{ const client=supabase(); if(!client){router.replace('/');return;} client.auth.getSession().then(({data})=>{if(!data.session)router.replace('/');else setEmail(data.session.user.email||'Player');}); },[router]);

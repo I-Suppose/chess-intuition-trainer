@@ -41,5 +41,26 @@ class GameOut(BaseModel):
     played_at: datetime | None
     time_control: str | None
     opening_name: str | None
+    opening_line: str | None
     import_status: GameStatus
     analysis_status: GameStatus
+
+
+class PuzzleAttemptIn(BaseModel):
+    move_uci: str = Field(min_length=4, max_length=5, pattern=r"^[a-h][1-8][a-h][1-8][qrbn]?$")
+    time_taken: float | None = Field(default=None, ge=0, le=86400)
+
+
+class PuzzleAttemptOut(BaseModel):
+    attempt_id: uuid.UUID
+    is_correct: bool
+    message: str
+
+
+class PuzzleSolutionOut(BaseModel):
+    solution_move_uci: str
+    solution_move_san: str
+    principal_variation_uci: list[str]
+    principal_variation_san: list[str]
+    explanation: str
+    played_move_san: str | None

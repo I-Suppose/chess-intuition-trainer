@@ -23,6 +23,9 @@ services:
   api:
     build: ./backend
     env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://chess:chess@db:5432/chess_trainer
+      REDIS_URL: redis://redis:6379/0
     ports: ["8000:8000"]
     depends_on:
       db: { condition: service_healthy }
@@ -31,6 +34,9 @@ services:
     build: ./backend
     command: celery -A app.workers.celery_app worker --loglevel=INFO --concurrency=2
     env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://chess:chess@db:5432/chess_trainer
+      REDIS_URL: redis://redis:6379/0
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }

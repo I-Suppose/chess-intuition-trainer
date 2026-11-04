@@ -1,6 +1,6 @@
 # Chess Intuition Trainer
 
-A web application for importing public Chess.com and Lichess games into a personal training library. This first implementation establishes the sign-in, account connection, import, storage, and game browsing milestone from the product requirements.
+A web application for importing public Chess.com and Lichess games and turning the player's own turning points into chess training puzzles.
 
 ## What is implemented
 
@@ -9,11 +9,16 @@ A web application for importing public Chess.com and Lichess games into a person
 - Real public profile validation through the Chess.com Published Data API and Lichess API.
 - Background game imports through Celery and Redis; latest 100 games per account on first import.
 - PGN and game metadata storage in PostgreSQL, with duplicate prevention and newest-first game browsing.
+- Stockfish UCI analysis of the connected player's decisions, processed newest game first in the background.
+- Turning point classification and puzzles generated only from imported game positions; solutions use legal engine moves and verified close alternatives.
+- Opening repertoire and move line summaries derived from the user's imported PGNs.
+- Puzzle solving on a legal interactive chessboard, recorded attempts, solution line playback, and priority/category filters.
 - Refresh, older-game import API, sync status, and account disconnect that preserves imported game history.
 - Responsive dashboard, account connection, game library, and settings screens.
-- Alembic migration and Docker Compose development services.
+- Light and dark theme selection saved in the browser.
+- Alembic migrations and Docker Compose development services, with Stockfish installed in the backend image.
 
-Stockfish analysis, move classification, puzzle generation/solving, puzzle attempt tracking, and full account deletion are not implemented yet. The puzzle page intentionally reports this state and does not show fabricated analysis. The attached PRD remains the source for those next phases.
+Full application account deletion and advanced coach features from the PRD are not implemented. Puzzle positions are created from actual imported PGNs and Stockfish analysis; no general puzzle feed or sample positions are used.
 
 ## Start locally
 
@@ -34,7 +39,7 @@ The API is at [http://localhost:8000](http://localhost:8000), OpenAPI docs at [h
 
 ## Run the web and API outside Docker
 
-Start PostgreSQL and Redis, configure `.env`, and run:
+Start PostgreSQL and Redis, configure `.env`, and run. The Compose API and worker override the host-only database and Redis URLs with the internal `db` and `redis` service addresses; the browser still uses `http://localhost:8000/api/v1` by default.
 
 ```powershell
 cd backend
@@ -70,6 +75,10 @@ Set `NEXT_PUBLIC_API_URL` to the API base URL with `/api/v1` appended. The front
 - Games with unknown dates keep a null date and appear after dated games; the application never invents a date.
 - `POST /api/v1/games/import-older?account_id=<uuid>` requests the next older page for a connected account.
 - `POST /api/v1/accounts/{account_id}/sync` queues a refresh. Background work requires Redis and a running Celery worker.
-- `INITIAL_GAME_IMPORT_LIMIT` defaults to 100. Stockfish settings in `.env.example` are reserved for the analysis phase.
+- `INITIAL_GAME_IMPORT_LIMIT` defaults to 100. Pending games are analyzed automatically after import and when the API starts. The fast Stockfish scan runs on each user decision; positions that look important receive the configured deeper analysis.
+- `STOCKFISH_SCAN_TIME_LIMIT` controls the quick scan per decision. `STOCKFISH_DEPTH` and `STOCKFISH_TIME_LIMIT` control deeper candidate analysis. Set `STOCKFISH_PATH` if Stockfish is not on the executable path.
+- `/api/v1/openings` summarizes opening families and the first 12 half-moves from the actual PGNs.
+- `/api/v1/games/{game_id}/analysis` returns evaluated user decision positions. `/api/v1/puzzles` lists puzzles in category priority order, with newer games first within a category.
+- Puzzle attempts are checked against legal moves and the engine's best move plus alternatives within 0.25 pawns. The solution is available after an attempt.
 
 See `.env.example` for the complete configuration list. Never commit `.env` or place the Supabase service role key in a `NEXT_PUBLIC_` variable.
