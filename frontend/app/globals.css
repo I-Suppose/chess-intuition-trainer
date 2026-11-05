@@ -59,6 +59,20 @@ button, input { font: inherit; }
 .puzzle-move-row:last-child { border-bottom:0; }
 .puzzle-move-number { color:#89948d;font-size:11px; }
 .puzzle-moves-empty { padding:10px 12px;margin:0;font-size:12px; }
+.puzzle-section { margin-top:25px; }
+.puzzle-section-head { margin:0 0 13px; }
+.puzzle-section-head h2 { display:flex;align-items:center;gap:9px;font-size:18px; }
+.puzzle-section-head h2 .subtle { font-size:12px; }
+.puzzle-empty { padding:35px 20px; }
+.puzzle-complete-empty { padding:18px 20px;font-size:13px; }
+.puzzle-explanation { margin-top:18px;padding-top:15px;border-top:1px solid #e9eeea; }
+.puzzle-explanation h3 { margin:0 0 7px;font-size:15px; }
+.puzzle-explanation-summary { font-size:13px;line-height:1.7; }
+.puzzle-move-explanations { display:grid;gap:8px;margin-top:12px; }
+.puzzle-move-explanation { padding:10px 11px;border-radius:8px;background:#f6f8f6;font-size:12px;line-height:1.65; }
+.puzzle-move-explanation strong { display:block;margin-bottom:3px;color:#355a3c; }
+.puzzle-help-actions { display:flex;gap:8px;flex-wrap:wrap;margin:15px 0; }
+.puzzle-hint { margin:0 0 14px;padding:11px 13px;border-radius:8px;background:#eef4ee;color:#405f45;font-size:13px;line-height:1.6; }
 .trainer-feedback { padding:12px 14px;border-radius:8px;background:#edf4ed;color:#426d4c;font-size:13px;margin:15px 0; }
 .trainer-feedback.wrong { background:#fbefed;color:#a34c45; }
 .promotion-choices { display:flex;gap:8px;margin:12px 0; }
@@ -166,6 +180,10 @@ html[data-theme='dark'] .puzzle-moves { border-color:#35453a; }
 html[data-theme='dark'] .puzzle-moves-heading { background:#202c24;border-color:#35453a; }
 html[data-theme='dark'] .puzzle-moves-heading span,html[data-theme='dark'] .puzzle-move-number { color:#9eada3; }
 html[data-theme='dark'] .puzzle-move-row { border-color:#2a3730; }
+html[data-theme='dark'] .puzzle-complete-empty,html[data-theme='dark'] .puzzle-explanation { border-color:#2a3730; }
+html[data-theme='dark'] .puzzle-move-explanation { background:#202c24; }
+html[data-theme='dark'] .puzzle-move-explanation strong { color:#b9d7ba; }
+html[data-theme='dark'] .puzzle-hint { background:#25382a;color:#d1e1d2; }
 html[data-theme='dark'] .filter-select,html[data-theme='dark'] .filter-select option { background:#18211c;color:#dfe9e1;border-color:#3a4940;color-scheme:dark; }
 html[data-theme='dark'] .opening-folder > summary small { color:#a3b0a8; }
 html[data-theme='dark'] .folder-contents,html[data-theme='dark'] .folder-game { border-color:#2a3730; }

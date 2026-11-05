@@ -181,7 +181,7 @@ def retry_game_analysis(game_id: uuid.UUID, db: Session = Depends(get_db), user:
 def puzzles(category: str | None = None, completed: bool | None = None, platform: Platform | None = None,
             opening: str | None = None, page: int = Query(1, ge=1), page_size: int = Query(24, ge=1, le=100),
             db: Session = Depends(get_db), user: User = Depends(current_user)):
-    solved_ids = select(PuzzleAttempt.puzzle_id).where(PuzzleAttempt.user_id == user.id, PuzzleAttempt.completed.is_(True)).distinct()
+    completed_ids = select(PuzzleAttempt.puzzle_id).where(PuzzleAttempt.user_id == user.id, PuzzleAttempt.completed.is_(True)).distinct()
     query = select(Puzzle, Game, ConnectedAccount).join(Game, Puzzle.game_id == Game.id).join(ConnectedAccount, Game.account_id == ConnectedAccount.id).where(Puzzle.user_id == user.id)
     if category:
         query = query.where(Puzzle.puzzle_category == category)
@@ -190,13 +190,19 @@ def puzzles(category: str | None = None, completed: bool | None = None, platform
     if opening:
         query = query.where(Game.opening_name == opening)
     if completed is True:
-        query = query.where(Puzzle.id.in_(solved_ids))
+        query = query.where(Puzzle.id.in_(completed_ids))
     elif completed is False:
-        query = query.where(~Puzzle.id.in_(solved_ids))
+        query = query.where(~Puzzle.id.in_(completed_ids))
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     rows = db.execute(query.order_by(Puzzle.priority, Game.played_at.desc().nullslast(), Puzzle.game_move_number, Puzzle.created_at)
                       .offset((page - 1) * page_size).limit(page_size)).all()
-    solved_set = set(db.scalars(solved_ids).all())
+    completed_set = set(db.scalars(completed_ids).all())
+    solved_set = set(db.scalars(select(PuzzleAttempt.puzzle_id).where(PuzzleAttempt.user_id == user.id,
+                                                                     PuzzleAttempt.completed.is_(True),
+                                                                     PuzzleAttempt.revealed.is_(False)).distinct()).all())
+    revealed_set = set(db.scalars(select(PuzzleAttempt.puzzle_id).where(PuzzleAttempt.user_id == user.id,
+                                                                       PuzzleAttempt.completed.is_(True),
+                                                                       PuzzleAttempt.revealed.is_(True)).distinct()).all())
     items = []
     for puzzle, game, account in rows:
         items.append({"id": puzzle.id, "game_id": game.id, "white_player": game.white_player, "black_player": game.black_player,
@@ -205,7 +211,9 @@ def puzzles(category: str | None = None, completed: bool | None = None, platform
                       "opening_name": game.opening_name, "opening_line": game.opening_line,
                       "opponent_username": game.opponent_username, "played_at": game.played_at,
                       "platform": account.platform, "game_url": game.game_url,
-                      "completed": puzzle.id in solved_set, "explanation": puzzle.explanation if puzzle.id in solved_set else None})
+                      "completed": puzzle.id in completed_set, "solved": puzzle.id in solved_set,
+                      "revealed": puzzle.id in revealed_set,
+                      "explanation": puzzle.explanation if puzzle.id in completed_set else None})
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
@@ -287,17 +295,97 @@ def _puzzle_solution_line(item: Puzzle, analysis: GameAnalysis | None) -> list[s
     return full_line[:min(len(full_line), user_moves * 2)]
 
 
+def _piece_label(piece: chess.Piece | None) -> str:
+    if not piece:
+        return "piece"
+    color = "white" if piece.color == chess.WHITE else "black"
+    return f"{color} {chess.piece_name(piece.piece_type)}"
+
+
+def _solution_explanations(item: Puzzle, game: Game, analysis: GameAnalysis | None, line: list[str]):
+    board = chess.Board(item.fen)
+    explanations = []
+    move_sans = []
+    start_material = sum((1 if piece.color == chess.WHITE else -1) * {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3,
+                           chess.ROOK: 5, chess.QUEEN: 9, chess.KING: 0}[piece.piece_type]
+                         for piece in board.piece_map().values())
+    for index, uci in enumerate(line):
+        try:
+            move = chess.Move.from_uci(uci)
+            if move not in board.legal_moves:
+                break
+            mover = board.piece_at(move.from_square)
+            captured = board.piece_at(move.to_square)
+            if board.is_en_passant(move):
+                captured = chess.Piece(chess.PAWN, not board.turn)
+            color = "White" if board.turn == chess.WHITE else "Black"
+            san = board.san(move)
+            notes = []
+            if board.is_castling(move):
+                notes.append(f"{color} castles to move the king to safety and connect the rooks.")
+            elif board.is_capture(move):
+                notes.append(f"{san} captures the {_piece_label(captured)} on {chess.square_name(move.to_square)}.")
+            elif move.promotion:
+                notes.append(f"The pawn promotes to a {chess.piece_name(move.promotion)} on {chess.square_name(move.to_square)}.")
+            else:
+                notes.append(f"The {chess.piece_name(mover.piece_type) if mover else 'piece'} moves to {chess.square_name(move.to_square)}.")
+            gives_check = board.gives_check(move)
+            if gives_check:
+                notes.append("It gives check, so the opponent must answer the king threat.")
+            if index == 0 and analysis and analysis.material_sacrifice:
+                notes.append("This is the material investment in the combination. The next forcing moves are the point of the idea; judge the whole line, not only this first exchange.")
+            board.push(move)
+            move_sans.append(san)
+            explanations.append({"number": index + 1, "color": color.lower(), "san": san, "explanation": " ".join(notes)})
+        except ValueError:
+            break
+    end_material = sum((1 if piece.color == chess.WHITE else -1) * {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3,
+                         chess.ROOK: 5, chess.QUEEN: 9, chess.KING: 0}[piece.piece_type]
+                       for piece in board.piece_map().values())
+    user_material_change = end_material - start_material
+    if game.user_colour == "black":
+        user_material_change *= -1
+    reason = analysis.classification_reason if analysis and analysis.classification_reason else "This position was selected as a turning point in your game."
+    first_move = move_sans[0] if move_sans else item.solution_uci
+    summary = f"This position comes from move {item.game_move_number} in your {game.opening_name or 'game'}. {reason} The strongest continuation begins with {first_move}."
+    if analysis:
+        try:
+            original = chess.Board(item.fen).san(chess.Move.from_uci(analysis.played_move_uci))
+            if original != first_move:
+                summary += f" In your game you played {original}; the engine's preferred move was {first_move}."
+        except (ValueError, AssertionError):
+            pass
+        before = analysis.evaluation_before or {}
+        after = analysis.evaluation_after or {}
+        if before.get("type") == "cp" and after.get("type") == "cp":
+            sign = 1 if game.user_colour != "black" else -1
+            difference = round((before.get("value", 0) - after.get("value", 0)) * sign)
+            if difference > 0:
+                summary += f" At the recorded search depth, the engine's preferred move scored about {difference} centipawns better for your side than the move played in the game."
+    if analysis and analysis.material_sacrifice:
+        if user_material_change >= 0:
+            summary += " The continuation recovers the invested material by the end of this short line."
+        else:
+            summary += " Stockfish preferred this material investment at the recorded search depth. Follow the forcing replies above to see the compensation; material count alone does not show the full position."
+    elif move_sans:
+        summary += f" Follow the {len(move_sans)} engine-selected plies above: each reply is included so you can see the idea develop instead of judging the first move alone."
+    return summary, explanations
+
+
 @router.get("/puzzles/{puzzle_id}")
 def puzzle(puzzle_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(current_user)):
     item, game, account = _owned_puzzle(db, puzzle_id, user)
-    solved = db.scalar(select(PuzzleAttempt.id).where(PuzzleAttempt.user_id == user.id, PuzzleAttempt.puzzle_id == item.id,
-                                                      PuzzleAttempt.completed.is_(True)).limit(1)) is not None
+    finished_attempt = db.scalar(select(PuzzleAttempt).where(PuzzleAttempt.user_id == user.id, PuzzleAttempt.puzzle_id == item.id,
+                                                              PuzzleAttempt.completed.is_(True)).order_by(PuzzleAttempt.attempted_at.desc()).limit(1))
+    solved = bool(finished_attempt and not finished_attempt.revealed)
+    revealed = bool(finished_attempt and finished_attempt.revealed)
     attempts = db.scalar(select(func.count(PuzzleAttempt.id)).where(PuzzleAttempt.user_id == user.id, PuzzleAttempt.puzzle_id == item.id)) or 0
     return {"id": item.id, "category": item.puzzle_category, "priority": item.priority, "fen": item.fen,
             "side_to_move": item.side_to_move, "game_move_number": item.game_move_number,
             "opening_name": game.opening_name, "opening_line": game.opening_line,
             "opponent_username": game.opponent_username, "played_at": game.played_at,
-            "platform": account.platform, "game_url": game.game_url, "completed": solved,
+            "platform": account.platform, "game_url": game.game_url, "completed": bool(finished_attempt),
+            "solved": solved, "revealed": revealed,
             "attempt_count": attempts, "explanation": item.explanation if solved else None}
 
 
@@ -355,6 +443,43 @@ def submit_puzzle_attempt(puzzle_id: uuid.UUID, payload: PuzzleAttemptIn, db: Se
                             line_complete=line_complete, opponent_move_uci=opponent_move if correct else None)
 
 
+@router.get("/puzzles/{puzzle_id}/hint")
+def puzzle_hint(puzzle_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    item, game, _ = _owned_puzzle(db, puzzle_id, user)
+    analysis = db.get(GameAnalysis, item.analysis_id)
+    board = chess.Board(item.fen)
+    best = chess.Move.from_uci(item.solution_uci)
+    if analysis and analysis.material_sacrifice:
+        hint = "This idea starts by investing material. Do not stop at the sacrifice: look for the forcing check or capture that makes the opponent's king or pieces vulnerable."
+    elif best in board.legal_moves and board.is_capture(best):
+        captured = board.piece_at(best.to_square)
+        hint = f"Look for a loose {chess.piece_name(captured.piece_type) if captured else 'piece'} and check whether the opponent can recapture after you take it. A safe material gain may be enough here."
+    elif best in board.legal_moves and board.gives_check(best):
+        hint = "Start by checking forcing moves. A check narrows the opponent's replies; calculate what you can do after the king responds."
+    elif item.puzzle_category == "Defensive Resource":
+        hint = "First identify the opponent's immediate threat. Look for an active defense that also creates a counter-threat."
+    elif item.puzzle_category == "Tactical Combination":
+        hint = "Look for forcing checks and captures, then calculate the opponent's best reply before choosing your follow-up."
+    else:
+        hint = "Compare checks, captures, and direct threats first. After each candidate, ask what the opponent's strongest reply would be."
+    if game.opening_name:
+        hint += f" This position comes from your {game.opening_name}."
+    return {"hint": hint}
+
+
+@router.post("/puzzles/{puzzle_id}/reveal", response_model=PuzzleSolutionOut)
+def reveal_puzzle_solution(puzzle_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    item, game, _ = _owned_puzzle(db, puzzle_id, user)
+    finished = db.scalar(select(PuzzleAttempt.id).where(PuzzleAttempt.user_id == user.id,
+                                                        PuzzleAttempt.puzzle_id == item.id,
+                                                        PuzzleAttempt.completed.is_(True)).limit(1))
+    if not finished:
+        db.add(PuzzleAttempt(user_id=user.id, puzzle_id=item.id, submitted_move=None, is_correct=False,
+                             completed=True, revealed=True, time_taken=None))
+        db.commit()
+    return _solution_response(db, item, game)
+
+
 @router.get("/puzzles/{puzzle_id}/solution", response_model=PuzzleSolutionOut)
 def puzzle_solution(puzzle_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(current_user)):
     item, game, _ = _owned_puzzle(db, puzzle_id, user)
@@ -362,6 +487,10 @@ def puzzle_solution(puzzle_id: uuid.UUID, db: Session = Depends(get_db), user: U
                                                          PuzzleAttempt.completed.is_(True)).limit(1))
     if not completed:
         raise HTTPException(403, "Complete the puzzle line before viewing the solution.")
+    return _solution_response(db, item, game)
+
+
+def _solution_response(db: Session, item: Puzzle, game: Game):
     board = chess.Board(item.fen)
     solution = chess.Move.from_uci(item.solution_uci)
     solution_san = board.san(solution)
@@ -380,9 +509,11 @@ def puzzle_solution(puzzle_id: uuid.UUID, db: Session = Depends(get_db), user: U
             break
         pv_san.append(board.san(move))
         board.push(move)
+    explanation, move_explanations = _solution_explanations(item, game, analysis, solution_line)
     return PuzzleSolutionOut(solution_move_uci=item.solution_uci, solution_move_san=solution_san,
                              principal_variation_uci=solution_line, principal_variation_san=pv_san,
-                             explanation=item.explanation, played_move_san=played_san)
+                             explanation=explanation, played_move_san=played_san,
+                             move_explanations=move_explanations)
 
 
 @router.get("/puzzles/{puzzle_id}/analysis")
@@ -447,7 +578,7 @@ def progress_history(page: int = Query(1, ge=1), page_size: int = Query(30, ge=1
     query = select(PuzzleAttempt, Puzzle, Game).join(Puzzle, PuzzleAttempt.puzzle_id == Puzzle.id).join(Game, Puzzle.game_id == Game.id).where(PuzzleAttempt.user_id == user.id)
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     rows = db.execute(query.order_by(PuzzleAttempt.attempted_at.desc()).offset((page - 1) * page_size).limit(page_size)).all()
-    return {"items": [{"attempted_at": attempt.attempted_at, "is_correct": attempt.is_correct,
+    return {"items": [{"attempted_at": attempt.attempted_at, "is_correct": attempt.is_correct, "revealed": attempt.revealed,
                        "submitted_move": attempt.submitted_move, "category": item.puzzle_category,
                        "opening_name": game.opening_name, "game_move_number": item.game_move_number,
                        "puzzle_id": item.id} for attempt, item, game in rows], "total": total, "page": page, "page_size": page_size}

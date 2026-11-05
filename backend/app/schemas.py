@@ -68,3 +68,4 @@ class PuzzleSolutionOut(BaseModel):
     principal_variation_san: list[str]
     explanation: str
     played_move_san: str | None
+    move_explanations: list[dict]
