@@ -53,7 +53,73 @@ button, input { font: inherit; }
 .trainer-feedback { padding:12px 14px;border-radius:8px;background:#edf4ed;color:#426d4c;font-size:13px;margin:15px 0; }
 .trainer-feedback.wrong { background:#fbefed;color:#a34c45; }
 .promotion-choices { display:flex;gap:8px;margin:12px 0; }
+.filter-select { padding:10px 12px;border:1px solid #dfe5e0;border-radius:8px;background:#fff;color:#26352c; }
+.filter-select option { background:#fff;color:#26352c; }
+.opening-folders { display:grid;gap:13px; }
+.opening-folder { overflow:hidden; }
+.opening-folder > summary { list-style:none;cursor:pointer;padding:18px 20px;display:flex;align-items:center;justify-content:space-between;gap:15px; }
+.opening-folder > summary::-webkit-details-marker { display:none; }
+.opening-folder > summary span:first-child { display:grid;gap:5px; }
+.opening-folder > summary strong { font-size:15px; }
+.opening-folder > summary small { color:#7b8780;font-size:12px; }
+.folder-contents { border-top:1px solid #edf0ed;padding:0 19px 12px; }
+.folder-game { padding:17px 0;border-bottom:1px solid #edf0ed; }
+.folder-game:last-child { border-bottom:0; }
+.folder-game-title,.opening-summary { display:flex;align-items:start;justify-content:space-between;gap:16px;margin-bottom:13px; }
+.folder-game-title a,.opening-games-link { color:#476b50; }
+.folder-game-title a { font-size:12px; }
+.puzzle-action { display:flex;align-items:center;gap:7px;color:#55775b;font-size:12px;margin-top:15px; }
+.folder-filter-note { margin:14px 0;padding:12px 14px;border-radius:8px;background:#eef4ee;color:#526e55;font-size:13px; }
+.folder-filter-note a { margin-left:8px;color:inherit; }
+.versus { color:#9aa39d; }
+.game-meta { font-size:11px;color:#89948d;margin-top:4px; }
+.game-line { font-size:11px;max-width:280px; }
+.score-rate { font-size:13px;color:#55775b; }
+.opening-moves { font-family:monospace;line-height:1.6; }
+.opening-games-link { margin-top:17px;text-decoration:none; }
+.next-puzzle-action { display:flex;justify-content:flex-end;margin-top:20px;padding-top:15px;border-top:1px solid #edf0ed; }
+.analysis-back { display:flex;justify-content:space-between;align-items:center;gap:15px;margin-bottom:16px; }
+.analysis-back a { display:flex;align-items:center;gap:6px;text-decoration:none; }
+.analysis-layout { display:grid;grid-template-columns:minmax(320px,1.15fr) minmax(300px,.85fr);gap:16px;margin-top:20px;align-items:start; }
+.analysis-board-card { padding:16px;display:grid;grid-template-columns:36px minmax(0,1fr);gap:10px;align-items:center; }
+.analysis-board { width:100%; }
+.eval-rail { height:100%;min-height:250px;display:flex;flex-direction:column;align-items:center;gap:6px;font-size:10px;color:#748078; }
+.eval-value { font-weight:700;font-size:12px;color:#24352a; }
+.eval-track { background:#242a27;border:1px solid #68716c;border-radius:5px;width:18px;flex:1;min-height:180px;position:relative;overflow:hidden; }
+.eval-white { position:absolute;bottom:0;left:0;right:0;background:#f4f4ef;transition:height .2s; }
+.analysis-controls { grid-column:2;display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%; }
+.analysis-controls > span { color:#76837b;font-size:12px;text-align:center; }
+.reset-variation { grid-column:2;justify-self:end; }
+.analysis-panel { padding:18px;min-height:400px; }
+.analysis-panel h2,.critical-index h2 { margin:0 0 14px;font-size:17px; }
+.move-list-head,.move-row { display:grid;grid-template-columns:34px 1fr 1fr;align-items:center; }
+.move-list-head { padding:8px 5px;color:#818d85;font-size:11px;text-transform:uppercase;border-bottom:1px solid #e9eeea; }
+.move-list { max-height:530px;overflow:auto; }
+.move-row { min-height:34px;border-bottom:1px solid #eef1ef;font-size:13px; }
+.move-number { color:#94a098;padding-left:5px;font-size:11px; }
+.move-row button { position:relative;border:0;background:transparent;color:inherit;text-align:left;padding:7px 9px;border-radius:5px;cursor:pointer; }
+.move-row button:hover,.move-row button.selected-move { background:#edf4ed;color:#345b3c; }
+.critical-flag { color:#bd7e29;margin-left:7px;vertical-align:middle;cursor:pointer; }
+.critical-analysis,.critical-index { padding:20px;margin-top:16px; }
+.critical-heading { display:flex;justify-content:space-between;align-items:start;gap:20px; }
+.critical-heading h2 { margin:8px 0 4px;font-size:19px; }
+.critical-heading .eyebrow { display:flex;align-items:center;gap:6px; }
+.critical-eval { display:grid;gap:6px;text-align:right;font-size:11px;color:#7b8780;white-space:nowrap; }
+.critical-eval strong { color:#34473a;font-size:14px; }
+.line-options { display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:16px; }
+.line-option { border:1px solid #e7ece8;border-radius:10px;padding:14px;display:grid;gap:12px;align-content:start; }
+.line-option-head { display:flex;justify-content:space-between;gap:10px;font-size:13px; }
+.line-option-head span { color:#738078; }
+.analysis-san { min-height:38px;font-family:monospace;line-height:1.7;font-size:12px; }
+.line-option .button { justify-self:start; }
+.critical-index > .subtle { margin-top:-7px; }
+.critical-index-row { width:100%;display:grid;grid-template-columns:22px minmax(80px,.5fr) minmax(150px,1fr) auto;align-items:center;gap:10px;padding:11px 8px;border:0;border-top:1px solid #edf0ed;background:transparent;color:inherit;text-align:left;font-size:12px;cursor:pointer; }
+.critical-index-row svg { color:#bd7e29; }
+.critical-index-row span:last-child { color:#738078; }
+.critical-index-row:hover,.critical-index-row.active { background:#f0f5f0; }
 @media(max-width:950px) { .trainer-layout{grid-template-columns:1fr} }
+@media(max-width:900px) { .analysis-layout{grid-template-columns:1fr}.analysis-panel{min-height:250px}.critical-heading{flex-direction:column}.critical-eval{text-align:left} }
+@media(max-width:580px) { .analysis-board-card{padding:9px;grid-template-columns:27px minmax(0,1fr);gap:6px}.eval-track{width:14px;min-height:130px}.analysis-controls{grid-column:1 / -1}.reset-variation{grid-column:1 / -1}.critical-index-row{grid-template-columns:20px 65px 1fr}.critical-index-row span:last-child{grid-column:3}.analysis-controls .button{padding:9px} }
 @media(max-width:650px) { .puzzle-grid{grid-template-columns:1fr} }
 html[data-theme='dark'] { color-scheme:dark; }
 html[data-theme='dark'] body { background:#111814;color:#e4ebe6; }
@@ -87,3 +153,16 @@ html[data-theme='dark'] .stat-label { color:#a3b0a8; }
 html[data-theme='dark'] .line-row { border-color:#2a3730; }
 html[data-theme='dark'] .trainer-feedback { background:#25382a;color:#b7d7b9; }
 html[data-theme='dark'] .trainer-feedback.wrong { background:#402a27;color:#edaaa3; }
+html[data-theme='dark'] .filter-select,html[data-theme='dark'] .filter-select option { background:#18211c;color:#dfe9e1;border-color:#3a4940;color-scheme:dark; }
+html[data-theme='dark'] .opening-folder > summary small { color:#a3b0a8; }
+html[data-theme='dark'] .folder-contents,html[data-theme='dark'] .folder-game { border-color:#2a3730; }
+html[data-theme='dark'] .folder-game-title a,html[data-theme='dark'] .opening-games-link,html[data-theme='dark'] .puzzle-action { color:#b6d5b5; }
+html[data-theme='dark'] .folder-filter-note { background:#25382a;color:#c5dcc6; }
+html[data-theme='dark'] .game-meta { color:#a3b0a8; }
+html[data-theme='dark'] .score-rate { color:#b6d5b5; }
+html[data-theme='dark'] .next-puzzle-action { border-color:#2a3730; }
+html[data-theme='dark'] .eval-value,html[data-theme='dark'] .critical-eval strong { color:#deeadf; }
+html[data-theme='dark'] .analysis-controls > span,html[data-theme='dark'] .critical-eval,html[data-theme='dark'] .line-option-head span,html[data-theme='dark'] .critical-index-row span:last-child { color:#a3b0a8; }
+html[data-theme='dark'] .move-list-head,html[data-theme='dark'] .move-row,html[data-theme='dark'] .critical-index-row { border-color:#2a3730; }
+html[data-theme='dark'] .move-row button:hover,html[data-theme='dark'] .move-row button.selected-move,html[data-theme='dark'] .critical-index-row:hover,html[data-theme='dark'] .critical-index-row.active { background:#25382a;color:#d8e9d9; }
+html[data-theme='dark'] .line-option { border-color:#35453a; }

@@ -89,10 +89,13 @@ def disconnect(account_id: uuid.UUID, db: Session = Depends(get_db), user: User 
 
 @router.get("/games", response_model=list[GameOut])
 def games(page: int = Query(1, ge=1), page_size: int = Query(30, ge=1, le=100), platform: Platform | None = None,
+          opening: str | None = None,
           db: Session = Depends(get_db), user: User = Depends(current_user)):
     query = select(Game).join(ConnectedAccount).where(ConnectedAccount.user_id == user.id)
     if platform:
         query = query.where(ConnectedAccount.platform == platform)
+    if opening:
+        query = query.where(func.coalesce(Game.opening_name, "Opening not classified") == opening)
     return db.scalars(query.order_by(Game.played_at.desc().nullslast(), Game.id).offset((page - 1) * page_size).limit(page_size)).all()
 
 
@@ -178,7 +181,7 @@ def retry_game_analysis(game_id: uuid.UUID, db: Session = Depends(get_db), user:
 def puzzles(category: str | None = None, completed: bool | None = None, platform: Platform | None = None,
             opening: str | None = None, page: int = Query(1, ge=1), page_size: int = Query(24, ge=1, le=100),
             db: Session = Depends(get_db), user: User = Depends(current_user)):
-    solved_ids = select(PuzzleAttempt.puzzle_id).where(PuzzleAttempt.user_id == user.id, PuzzleAttempt.is_correct.is_(True)).distinct()
+    solved_ids = select(PuzzleAttempt.puzzle_id).where(PuzzleAttempt.user_id == user.id, PuzzleAttempt.completed.is_(True)).distinct()
     query = select(Puzzle, Game, ConnectedAccount).join(Game, Puzzle.game_id == Game.id).join(ConnectedAccount, Game.account_id == ConnectedAccount.id).where(Puzzle.user_id == user.id)
     if category:
         query = query.where(Puzzle.puzzle_category == category)
@@ -196,13 +199,38 @@ def puzzles(category: str | None = None, completed: bool | None = None, platform
     solved_set = set(db.scalars(solved_ids).all())
     items = []
     for puzzle, game, account in rows:
-        items.append({"id": puzzle.id, "category": puzzle.puzzle_category, "priority": puzzle.priority, "fen": puzzle.fen,
+        items.append({"id": puzzle.id, "game_id": game.id, "white_player": game.white_player, "black_player": game.black_player,
+                      "result": game.result, "category": puzzle.puzzle_category, "priority": puzzle.priority, "fen": puzzle.fen,
                       "side_to_move": puzzle.side_to_move, "game_move_number": puzzle.game_move_number,
                       "opening_name": game.opening_name, "opening_line": game.opening_line,
                       "opponent_username": game.opponent_username, "played_at": game.played_at,
                       "platform": account.platform, "game_url": game.game_url,
                       "completed": puzzle.id in solved_set, "explanation": puzzle.explanation if puzzle.id in solved_set else None})
     return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+@router.get("/puzzles/{puzzle_id}/next")
+def next_puzzle(puzzle_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    current = db.scalar(select(Puzzle).where(Puzzle.id == puzzle_id, Puzzle.user_id == user.id))
+    if not current:
+        raise HTTPException(404, "Puzzle not found.")
+    solved = select(PuzzleAttempt.puzzle_id).where(PuzzleAttempt.user_id == user.id, PuzzleAttempt.completed.is_(True)).distinct()
+    rows = db.execute(select(Puzzle.id).join(Game, Puzzle.game_id == Game.id)
+                      .where(Puzzle.user_id == user.id, ~Puzzle.id.in_(solved))
+                      .order_by(Puzzle.priority, Game.played_at.desc().nullslast(), Puzzle.game_move_number, Puzzle.created_at)).scalars().all()
+    if not rows:
+        return {"id": None}
+    ordered = db.execute(select(Puzzle.id).join(Game, Puzzle.game_id == Game.id)
+                         .where(Puzzle.user_id == user.id)
+                         .order_by(Puzzle.priority, Game.played_at.desc().nullslast(), Puzzle.game_move_number, Puzzle.created_at)).scalars().all()
+    try:
+        current_index = ordered.index(puzzle_id)
+    except ValueError:
+        current_index = -1
+    next_id = next((item_id for item_id in rows if item_id in ordered[current_index + 1:]), None)
+    if next_id is None:
+        next_id = next((item_id for item_id in rows if item_id in ordered[:current_index + 1]), rows[0])
+    return {"id": next_id}
 
 
 def _owned_puzzle(db: Session, puzzle_id: uuid.UUID, user: User):
@@ -218,7 +246,7 @@ def _owned_puzzle(db: Session, puzzle_id: uuid.UUID, user: User):
 def puzzle(puzzle_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(current_user)):
     item, game, account = _owned_puzzle(db, puzzle_id, user)
     solved = db.scalar(select(PuzzleAttempt.id).where(PuzzleAttempt.user_id == user.id, PuzzleAttempt.puzzle_id == item.id,
-                                                      PuzzleAttempt.is_correct.is_(True)).limit(1)) is not None
+                                                      PuzzleAttempt.completed.is_(True)).limit(1)) is not None
     attempts = db.scalar(select(func.count(PuzzleAttempt.id)).where(PuzzleAttempt.user_id == user.id, PuzzleAttempt.puzzle_id == item.id)) or 0
     return {"id": item.id, "category": item.puzzle_category, "priority": item.priority, "fen": item.fen,
             "side_to_move": item.side_to_move, "game_move_number": item.game_move_number,
@@ -236,23 +264,59 @@ def submit_puzzle_attempt(puzzle_id: uuid.UUID, payload: PuzzleAttemptIn, db: Se
         board = chess.Board(item.fen)
     except ValueError as exc:
         raise HTTPException(422, "Move or puzzle position is invalid.") from exc
+    if payload.line_step % 2 != 0:
+        raise HTTPException(422, "Puzzle line steps must point to one of your turns.")
+    line = item.principal_variation or [item.solution_uci]
+    if payload.line_step >= len(line):
+        raise HTTPException(409, "This puzzle line is already complete.")
+    try:
+        for uci in line[:payload.line_step]:
+            prefix_move = chess.Move.from_uci(uci)
+            if prefix_move not in board.legal_moves:
+                break
+            board.push(prefix_move)
+    except ValueError as exc:
+        raise HTTPException(422, "Puzzle continuation is invalid.") from exc
     if move not in board.legal_moves:
         raise HTTPException(422, "That move is not legal in this position.")
-    accepted = item.accepted_solutions or [item.solution_uci]
+    accepted = [item.solution_uci] if payload.line_step == 0 else [line[payload.line_step]]
     correct = move.uci() in accepted
-    attempt = PuzzleAttempt(user_id=user.id, puzzle_id=item.id, submitted_move=move.uci(), is_correct=correct, time_taken=payload.time_taken)
+    opponent_move = line[payload.line_step + 1] if payload.line_step + 1 < len(line) else None
+    line_complete = correct and (payload.line_step + 2 >= len(line))
+    attempt = PuzzleAttempt(user_id=user.id, puzzle_id=item.id, submitted_move=move.uci(), is_correct=correct,
+                            completed=line_complete, time_taken=payload.time_taken)
     db.add(attempt)
     db.commit()
-    return PuzzleAttemptOut(attempt_id=attempt.id, is_correct=correct,
-                            message="Correct. Review the continuation and opening context." if correct else "Not the engine's best move. Try again or reveal the line after another attempt.")
+    analysis = db.get(GameAnalysis, item.analysis_id)
+    if correct:
+        feedback = "Good choice. This move is the strongest engine continuation in this position."
+        message = "Correct. You found the move; now find the follow-up." if not line_complete else "Correct. You completed the full puzzle line."
+    else:
+        feedback_by_category = {
+            "Brilliant Move": "This position rewards a precise move that keeps the tactical idea working. Your move misses that opportunity.",
+            "Missed Brilliant Opportunity": "The key is to use the available forcing continuation before the position changes.",
+            "Tactical Combination": "Look for a forcing move such as a check, capture, or threat that keeps the initiative.",
+            "Winning Move": "The position contains a way to build or preserve a decisive advantage; this move lets that edge slip.",
+            "Defensive Resource": "This is a difficult position where one accurate defensive move is needed to meet the threat.",
+            "Critical Decision": "This is a turning point: compare forcing continuations and check what the opponent can do next.",
+            "Great Move": "A precise move is needed here to keep the strongest continuation available.",
+            "Tactical Mistake": "Check the opponent's immediate threats and look for a forcing response before committing.",
+        }
+        feedback = feedback_by_category.get(item.puzzle_category, "That move misses the strongest continuation. Look for a more forcing response.")
+        if analysis and analysis.classification_reason:
+            feedback += f" In the original game, the engine noted: {analysis.classification_reason}"
+        message = "Not quite. Review the hint and try another legal move."
+    return PuzzleAttemptOut(attempt_id=attempt.id, is_correct=correct, message=message, feedback=feedback,
+                            line_complete=line_complete, opponent_move_uci=opponent_move if correct else None)
 
 
 @router.get("/puzzles/{puzzle_id}/solution", response_model=PuzzleSolutionOut)
 def puzzle_solution(puzzle_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(current_user)):
     item, game, _ = _owned_puzzle(db, puzzle_id, user)
-    attempted = db.scalar(select(PuzzleAttempt.id).where(PuzzleAttempt.user_id == user.id, PuzzleAttempt.puzzle_id == item.id).limit(1))
-    if not attempted:
-        raise HTTPException(403, "Submit a move before viewing the solution.")
+    completed = db.scalar(select(PuzzleAttempt.id).where(PuzzleAttempt.user_id == user.id, PuzzleAttempt.puzzle_id == item.id,
+                                                         PuzzleAttempt.completed.is_(True)).limit(1))
+    if not completed:
+        raise HTTPException(403, "Complete the puzzle line before viewing the solution.")
     board = chess.Board(item.fen)
     solution = chess.Move.from_uci(item.solution_uci)
     solution_san = board.san(solution)
@@ -275,6 +339,47 @@ def puzzle_solution(puzzle_id: uuid.UUID, db: Session = Depends(get_db), user: U
                              explanation=item.explanation, played_move_san=played_san)
 
 
+@router.get("/puzzles/{puzzle_id}/analysis")
+def puzzle_game_analysis(puzzle_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    puzzle_item, game, account = _owned_puzzle(db, puzzle_id, user)
+    completed = db.scalar(select(PuzzleAttempt.id).where(PuzzleAttempt.user_id == user.id,
+                                                         PuzzleAttempt.puzzle_id == puzzle_item.id,
+                                                         PuzzleAttempt.completed.is_(True)).limit(1))
+    if not completed:
+        raise HTTPException(403, "Complete the puzzle before opening game analysis.")
+    rows = db.scalars(select(GameAnalysis).where(GameAnalysis.game_id == game.id).order_by(GameAnalysis.ply)).all()
+    return {"game": {"id": game.id, "opening_name": game.opening_name, "opening_line": game.opening_line,
+                      "white_player": game.white_player, "black_player": game.black_player, "user_colour": game.user_colour,
+                      "opponent_username": game.opponent_username, "result": game.result, "played_at": game.played_at,
+                      "platform": account.platform, "game_url": game.game_url},
+            "pgn": game.pgn,
+            "critical_points": [{"move_number": row.move_number, "ply": row.ply, "fen": row.fen,
+                                 "played_move_uci": row.played_move_uci, "best_move_uci": row.best_move_uci,
+                                 "alternatives": row.alternative_moves, "evaluation_before": row.evaluation_before,
+                                 "evaluation_after": row.evaluation_after, "principal_variation": row.principal_variation,
+                                 "classification": row.move_classification, "confidence": row.classification_confidence,
+                                 "reason": row.classification_reason} for row in rows
+                                if row.move_classification not in ("BEST", "GOOD", "UNCLASSIFIED")]}
+
+
+@router.get("/puzzles/{puzzle_id}/analysis/position/{ply}")
+def analyse_critical_position(puzzle_id: uuid.UUID, ply: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    puzzle_item, game, _ = _owned_puzzle(db, puzzle_id, user)
+    completed = db.scalar(select(PuzzleAttempt.id).where(PuzzleAttempt.user_id == user.id,
+                                                         PuzzleAttempt.puzzle_id == puzzle_item.id,
+                                                         PuzzleAttempt.completed.is_(True)).limit(1))
+    if not completed:
+        raise HTTPException(403, "Complete the puzzle before opening game analysis.")
+    row = db.scalar(select(GameAnalysis).where(GameAnalysis.game_id == game.id, GameAnalysis.ply == ply))
+    if not row or row.move_classification in ("BEST", "GOOD", "UNCLASSIFIED"):
+        raise HTTPException(404, "Critical position not found.")
+    try:
+        from app.services.stockfish_analyzer import analyse_position
+        return {"ply": row.ply, "alternatives": analyse_position(row.fen)}
+    except FileNotFoundError as exc:
+        raise HTTPException(503, "Stockfish is unavailable for line analysis.") from exc
+
+
 @router.get("/progress")
 def progress(db: Session = Depends(get_db), user: User = Depends(current_user)):
     account_ids = select(ConnectedAccount.id).where(ConnectedAccount.user_id == user.id)
@@ -284,7 +389,7 @@ def progress(db: Session = Depends(get_db), user: User = Depends(current_user)):
     analysed = db.scalar(select(func.count(Game.id)).where(Game.account_id.in_(account_ids), Game.analysis_status == GameStatus.analysed)) or 0
     total_puzzles = db.scalar(select(func.count(Puzzle.id)).where(Puzzle.user_id == user.id)) or 0
     brilliant = db.scalar(select(func.count(Puzzle.id)).where(Puzzle.user_id == user.id, Puzzle.puzzle_category == "Brilliant Move")) or 0
-    completed = db.scalar(select(func.count(func.distinct(PuzzleAttempt.puzzle_id))).where(PuzzleAttempt.user_id == user.id, PuzzleAttempt.is_correct.is_(True))) or 0
+    completed = db.scalar(select(func.count(func.distinct(PuzzleAttempt.puzzle_id))).where(PuzzleAttempt.user_id == user.id, PuzzleAttempt.completed.is_(True))) or 0
     return {"games_imported": total_games, "puzzles_generated": total_puzzles, "brilliant_puzzles": brilliant,
             "completed_puzzles": completed, "analysis_pending": pending, "analysis_failed": failed, "analysis_complete": analysed,
             "top_openings": _opening_profile(db, user)[:5]}

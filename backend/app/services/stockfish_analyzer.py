@@ -157,7 +157,8 @@ def _analyse_game(pgn: str, user_colour: str):
                 actual_best = actual_move == best_move
                 classification, category, confidence, reason = _classify(actual_best, loss_cp, best_cp, second_gap, sacrifice, forcing)
                 accepted = [info["pv"][0].uci() for info in infos if info.get("pv") and best_cp - _score_cp(info["score"], user_side) <= 25]
-                variations = [{"move": info["pv"][0].uci(), "score": _score_data(info["score"])} for info in infos if info.get("pv")]
+                variations = [{"move": info["pv"][0].uci(), "pv": [move.uci() for move in info["pv"]],
+                               "score": _score_data(info["score"])} for info in infos if info.get("pv")]
                 records.append({"ply": ply, "move_number": move_number, "fen": fen, "side_to_move": user_colour,
                                 "played_move_uci": actual_move.uci(), "played_move_san": played_san, "best_move_uci": best_move.uci(),
                                 "best_move_san": board.san(best_move), "alternative_moves": variations,
@@ -175,6 +176,20 @@ def _analyse_game(pgn: str, user_colour: str):
 def _fingerprint(fen: str) -> str:
     normalized = " ".join(fen.split()[:4])
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def analyse_position(fen: str) -> list[dict]:
+    """Return full MultiPV continuations for an analysis-board position."""
+    board = chess.Board(fen)
+    with chess.engine.SimpleEngine.popen_uci(_engine_path()) as engine:
+        engine.configure({"Threads": settings.stockfish_threads, "Hash": settings.stockfish_hash_mb})
+        infos = engine.analyse(board,
+                               chess.engine.Limit(depth=settings.stockfish_depth, time=settings.stockfish_time_limit),
+                               multipv=max(2, settings.stockfish_multipv))
+    if isinstance(infos, dict):
+        infos = [infos]
+    return [{"move": info["pv"][0].uci(), "pv": [move.uci() for move in info["pv"]],
+             "score": _score_data(info["score"])} for info in infos if info.get("pv")]
 
 
 def _explanation(record: dict, game: Game) -> str:

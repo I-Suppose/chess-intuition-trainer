@@ -125,5 +125,6 @@ class PuzzleAttempt(Base):
     puzzle_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("puzzles.id", ondelete="CASCADE"), index=True)
     submitted_move: Mapped[str] = mapped_column(String(8))
     is_correct: Mapped[bool] = mapped_column(Boolean)
+    completed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     time_taken: Mapped[float | None] = mapped_column(Float)
     attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

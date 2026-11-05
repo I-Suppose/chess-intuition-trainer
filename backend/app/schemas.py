@@ -48,6 +48,7 @@ class GameOut(BaseModel):
 
 class PuzzleAttemptIn(BaseModel):
     move_uci: str = Field(min_length=4, max_length=5, pattern=r"^[a-h][1-8][a-h][1-8][qrbn]?$")
+    line_step: int = Field(default=0, ge=0, le=80)
     time_taken: float | None = Field(default=None, ge=0, le=86400)
 
 
@@ -55,6 +56,9 @@ class PuzzleAttemptOut(BaseModel):
     attempt_id: uuid.UUID
     is_correct: bool
     message: str
+    feedback: str
+    line_complete: bool
+    opponent_move_uci: str | None
 
 
 class PuzzleSolutionOut(BaseModel):
