@@ -50,6 +50,15 @@ button, input { font: inherit; }
 .trainer-layout { display:grid;grid-template-columns:minmax(300px,560px) minmax(260px,1fr);gap:25px;align-items:start; }
 .trainer-board { width:100%;max-width:560px;margin:0 auto; }
 .trainer-panel { padding:21px; }
+.puzzle-moves { margin:18px 0 14px;border:1px solid #e7ece8;border-radius:9px;overflow:hidden; }
+.puzzle-moves-heading { display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;background:#f7f9f7;border-bottom:1px solid #e7ece8; }
+.puzzle-moves-heading h3 { margin:0;font-size:13px; }
+.puzzle-moves-heading span { color:#87928b;font-size:10px;text-transform:uppercase;letter-spacing:.5px; }
+.puzzle-move-table { max-height:190px;overflow:auto; }
+.puzzle-move-row { display:grid;grid-template-columns:34px minmax(0,1fr) minmax(0,1fr);gap:6px;align-items:center;min-height:32px;padding:3px 10px;border-bottom:1px solid #eef1ef;font-size:12px; }
+.puzzle-move-row:last-child { border-bottom:0; }
+.puzzle-move-number { color:#89948d;font-size:11px; }
+.puzzle-moves-empty { padding:10px 12px;margin:0;font-size:12px; }
 .trainer-feedback { padding:12px 14px;border-radius:8px;background:#edf4ed;color:#426d4c;font-size:13px;margin:15px 0; }
 .trainer-feedback.wrong { background:#fbefed;color:#a34c45; }
 .promotion-choices { display:flex;gap:8px;margin:12px 0; }
@@ -153,6 +162,10 @@ html[data-theme='dark'] .stat-label { color:#a3b0a8; }
 html[data-theme='dark'] .line-row { border-color:#2a3730; }
 html[data-theme='dark'] .trainer-feedback { background:#25382a;color:#b7d7b9; }
 html[data-theme='dark'] .trainer-feedback.wrong { background:#402a27;color:#edaaa3; }
+html[data-theme='dark'] .puzzle-moves { border-color:#35453a; }
+html[data-theme='dark'] .puzzle-moves-heading { background:#202c24;border-color:#35453a; }
+html[data-theme='dark'] .puzzle-moves-heading span,html[data-theme='dark'] .puzzle-move-number { color:#9eada3; }
+html[data-theme='dark'] .puzzle-move-row { border-color:#2a3730; }
 html[data-theme='dark'] .filter-select,html[data-theme='dark'] .filter-select option { background:#18211c;color:#dfe9e1;border-color:#3a4940;color-scheme:dark; }
 html[data-theme='dark'] .opening-folder > summary small { color:#a3b0a8; }
 html[data-theme='dark'] .folder-contents,html[data-theme='dark'] .folder-game { border-color:#2a3730; }

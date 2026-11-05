@@ -242,6 +242,51 @@ def _owned_puzzle(db: Session, puzzle_id: uuid.UUID, user: User):
     return row
 
 
+def _puzzle_solution_line(item: Puzzle, analysis: GameAnalysis | None) -> list[str]:
+    full_line = item.principal_variation or [item.solution_uci]
+    if not full_line:
+        return [item.solution_uci]
+    board = chess.Board(item.fen)
+    forcing_moves = 0
+    best_move = chess.Move.from_uci(full_line[0])
+    is_capture = best_move in board.legal_moves and board.is_capture(best_move)
+    for uci in full_line[:8]:
+        try:
+            move = chess.Move.from_uci(uci)
+            if move not in board.legal_moves:
+                break
+            if board.is_capture(move) or board.gives_check(move) or move.promotion:
+                forcing_moves += 1
+            board.push(move)
+        except ValueError:
+            break
+    simple_free_capture = is_capture and forcing_moves <= 1 and not (analysis and analysis.material_sacrifice)
+    if simple_free_capture and len(full_line) > 1:
+        try:
+            after_capture = chess.Board(item.fen)
+            after_capture.push(best_move)
+            reply = chess.Move.from_uci(full_line[1])
+            simple_free_capture = not (reply in after_capture.legal_moves and after_capture.is_capture(reply)
+                                       and reply.to_square == best_move.to_square)
+        except (ValueError, IndexError):
+            pass
+    if simple_free_capture:
+        user_moves = 1
+    elif analysis and analysis.material_sacrifice:
+        user_moves = 4 if forcing_moves >= 4 else 3
+    elif item.puzzle_category == "Tactical Combination":
+        user_moves = min(4, 2 + int(forcing_moves >= 2) + int(forcing_moves >= 4))
+    elif item.puzzle_category == "Missed Brilliant Opportunity":
+        user_moves = 2
+    elif item.puzzle_category in ("Defensive Resource", "Tactical Mistake") and forcing_moves >= 2:
+        user_moves = 2
+    elif item.puzzle_category == "Winning Move":
+        user_moves = 1 if simple_free_capture else 2
+    else:
+        user_moves = 1
+    return full_line[:min(len(full_line), user_moves * 2)]
+
+
 @router.get("/puzzles/{puzzle_id}")
 def puzzle(puzzle_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(current_user)):
     item, game, account = _owned_puzzle(db, puzzle_id, user)
@@ -266,7 +311,8 @@ def submit_puzzle_attempt(puzzle_id: uuid.UUID, payload: PuzzleAttemptIn, db: Se
         raise HTTPException(422, "Move or puzzle position is invalid.") from exc
     if payload.line_step % 2 != 0:
         raise HTTPException(422, "Puzzle line steps must point to one of your turns.")
-    line = item.principal_variation or [item.solution_uci]
+    analysis = db.get(GameAnalysis, item.analysis_id)
+    line = _puzzle_solution_line(item, analysis)
     if payload.line_step >= len(line):
         raise HTTPException(409, "This puzzle line is already complete.")
     try:
@@ -287,7 +333,6 @@ def submit_puzzle_attempt(puzzle_id: uuid.UUID, payload: PuzzleAttemptIn, db: Se
                             completed=line_complete, time_taken=payload.time_taken)
     db.add(attempt)
     db.commit()
-    analysis = db.get(GameAnalysis, item.analysis_id)
     if correct:
         feedback = "Good choice. This move is the strongest engine continuation in this position."
         message = "Correct. You found the move; now find the follow-up." if not line_complete else "Correct. You completed the full puzzle line."
@@ -327,15 +372,16 @@ def puzzle_solution(puzzle_id: uuid.UUID, db: Session = Depends(get_db), user: U
             played_san = board.san(chess.Move.from_uci(analysis.played_move_uci))
         except ValueError:
             pass
+    solution_line = _puzzle_solution_line(item, analysis)
     pv_san = []
-    for move_uci in (item.principal_variation or []):
+    for move_uci in solution_line:
         move = chess.Move.from_uci(move_uci)
         if move not in board.legal_moves:
             break
         pv_san.append(board.san(move))
         board.push(move)
     return PuzzleSolutionOut(solution_move_uci=item.solution_uci, solution_move_san=solution_san,
-                             principal_variation_uci=item.principal_variation or [], principal_variation_san=pv_san,
+                             principal_variation_uci=solution_line, principal_variation_san=pv_san,
                              explanation=item.explanation, played_move_san=played_san)
 
 
