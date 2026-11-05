@@ -185,7 +185,7 @@ def analyse_position(fen: str) -> list[dict]:
         engine.configure({"Threads": settings.stockfish_threads, "Hash": settings.stockfish_hash_mb})
         infos = engine.analyse(board,
                                chess.engine.Limit(depth=settings.stockfish_depth, time=settings.stockfish_time_limit),
-                               multipv=max(2, settings.stockfish_multipv))
+                               multipv=max(3, settings.stockfish_multipv))
     if isinstance(infos, dict):
         infos = [infos]
     return [{"move": info["pv"][0].uci(), "pv": [move.uci() for move in info["pv"]],

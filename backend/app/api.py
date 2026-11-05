@@ -1,7 +1,7 @@
 import uuid
 import httpx
 import chess
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from app.auth import current_user
@@ -302,6 +302,152 @@ def _piece_label(piece: chess.Piece | None) -> str:
     return f"{color} {chess.piece_name(piece.piece_type)}"
 
 
+def _describe_tactical_move(board: chess.Board, move: chess.Move) -> str:
+    """Describe observable consequences of a move from the actual board."""
+    mover = board.piece_at(move.from_square)
+    san = board.san(move)
+    color = "White" if board.turn else "Black"
+    if board.is_castling(move):
+        core = f"{color} castles, moving the king off the center and bringing the rook toward the middle."
+    elif board.is_capture(move):
+        captured = board.piece_at(move.to_square)
+        if board.is_en_passant(move):
+            captured = chess.Piece(chess.PAWN, not board.turn)
+        core = f"{san} removes the {_piece_label(captured)} from {chess.square_name(move.to_square)}."
+    elif move.promotion:
+        core = f"The pawn promotes on {chess.square_name(move.to_square)} to a {chess.piece_name(move.promotion)}, adding a major attacking piece."
+    else:
+        core = f"The {chess.piece_name(mover.piece_type) if mover else 'piece'} relocates from {chess.square_name(move.from_square)} to {chess.square_name(move.to_square)}."
+    gives_check = board.gives_check(move)
+    probe = board.copy()
+    probe.push(move)
+    if gives_check:
+        core += " It gives check, forcing a response to the king before the opponent can carry out another plan."
+    if probe.is_checkmate():
+        return f"{san} is checkmate."
+    # Name concrete enemy pieces this move attacks; this is more useful than
+    # repeating a generic instruction to look for tactics.
+    threatened = []
+    for square, piece in probe.piece_map().items():
+        if piece.color != board.turn and piece.piece_type != chess.KING and probe.is_attacked_by(board.turn, square):
+            attackers = probe.attackers(board.turn, square)
+            if move.to_square in attackers:
+                threatened.append((piece.piece_type, square))
+    threatened.sort(key=lambda entry: ({chess.QUEEN: 9, chess.ROOK: 5, chess.BISHOP: 3, chess.KNIGHT: 3, chess.PAWN: 1}.get(entry[0], 0), entry[1]), reverse=True)
+    if threatened:
+        labels = [f"the {chess.piece_name(kind)} on {chess.square_name(square)}" for kind, square in threatened[:2]]
+        if len(threatened) > 1:
+            core += " From there it forks " + (" and ".join(labels)) + ", creating two threats at once."
+        else:
+            core += " From there it directly attacks " + labels[0] + "."
+    elif mover:
+        before_control = board.attacks(move.from_square)
+        new_control = set(probe.attacks(move.to_square)) - set(before_control)
+        key_squares = {chess.D4, chess.E4, chess.D5, chess.E5}
+        controlled = sorted(new_control & key_squares)
+        if not controlled:
+            # For a quiet move away from the center, name the newly controlled
+            # squares in the opponent's half instead of inventing a tactic.
+            enemy_half = [sq for sq in new_control if chess.square_rank(sq) >= 4 if board.turn == chess.WHITE]
+            if board.turn == chess.BLACK:
+                enemy_half = [sq for sq in new_control if chess.square_rank(sq) <= 3]
+            controlled = sorted(enemy_half, key=lambda sq: (chess.square_distance(sq, chess.E4), sq))[:3]
+        if controlled:
+            square_names = ", ".join(chess.square_name(sq) for sq in controlled)
+            if set(controlled) & key_squares:
+                core += f" It newly controls the central square{'s' if len(controlled)>1 else ''} {square_names}, helping contest the center."
+            else:
+                core += f" From {chess.square_name(move.to_square)}, it adds control over {square_names}, useful squares in the opponent's half of the board."
+        # Point out a concrete defensive job when this move protects an own
+        # piece that the opponent currently attacks.
+        protected = []
+        for sq, piece in probe.piece_map().items():
+            if piece.color == board.turn and piece.piece_type != chess.KING and probe.is_attacked_by(not board.turn, sq):
+                if move.to_square in probe.attackers(board.turn, sq) and move.from_square not in board.attackers(board.turn, sq):
+                    protected.append((piece.piece_type, sq))
+        if protected:
+            kind, square = protected[0]
+            core += f" It also adds a defender to your {chess.piece_name(kind)} on {chess.square_name(square)}, which is under attack."
+    if mover and probe.is_attacked_by(not board.turn, move.to_square):
+        defenders = probe.attackers(board.turn, move.to_square)
+        if len(defenders) <= 1:
+            core += f" The moved {chess.piece_name(mover.piece_type)} can be challenged on {chess.square_name(move.to_square)}, so the continuation must account for that pressure."
+    return core
+
+
+def _missed_move_feedback(board: chess.Board, move: chess.Move, best_move: chess.Move,
+                          analysis: GameAnalysis | None, user_color: chess.Color) -> str:
+    def short_effect(position: chess.Board, candidate: chess.Move) -> str:
+        mover = position.piece_at(candidate.from_square)
+        if position.is_capture(candidate):
+            victim = position.piece_at(candidate.to_square)
+            if position.is_en_passant(candidate):
+                victim = chess.Piece(chess.PAWN, not position.turn)
+            return f"takes the {chess.piece_name(victim.piece_type) if victim else 'piece'} on {chess.square_name(candidate.to_square)}"
+        if position.gives_check(candidate):
+            return "checks the king"
+        after = position.copy()
+        after.push(candidate)
+        for square, victim in after.piece_map().items():
+            if victim.color != position.turn and victim.piece_type != chess.KING and candidate.to_square in after.attackers(position.turn, square):
+                return f"threatens the {chess.piece_name(victim.piece_type)} on {chess.square_name(square)}"
+        return f"moves the {chess.piece_name(mover.piece_type) if mover else 'piece'} to {chess.square_name(candidate.to_square)}"
+
+    details = [f"{board.san(move)} {short_effect(board, move)}.",
+               f"The stronger move {board.san(best_move)} {short_effect(board, best_move)}."]
+    try:
+        from app.services.stockfish_analyzer import analyse_position
+        after = board.copy()
+        after.push(move)
+        reply_lines = analyse_position(after.fen())
+        if reply_lines:
+            reply_board = after.copy()
+            reply = chess.Move.from_uci(reply_lines[0]["move"])
+            details.append(f"Stockfish's reply is {reply_board.san(reply)} {short_effect(reply_board, reply)}.")
+            score = reply_lines[0].get("score", {})
+            if score.get("type") == "cp":
+                user_score = score["value"] if user_color == chess.WHITE else -score["value"]
+                if user_score <= -250:
+                    details.append("That leaves the opponent with a clear advantage.")
+                elif user_score < 0:
+                    details.append("The opponent is better in the resulting position.")
+    except (FileNotFoundError, OSError, ValueError, KeyError, IndexError):
+        pass
+    return " ".join(details[:3])
+
+
+def _position_hint(board: chess.Board, line: list[str], line_step: int, attempt_count: int) -> str:
+    if line_step >= len(line):
+        return "You have found the full line already. Review the completed moves to see how the position changes."
+    best = chess.Move.from_uci(line[line_step])
+    san = board.san(best)
+    mover = board.piece_at(best.from_square)
+    if board.is_checkmate():
+        return "Look for the move that ends the game immediately; check every legal check for an escape square."
+    if board.gives_check(best):
+        hint = f"There is a forcing check available. Find a move that gives check from the {chess.piece_name(mover.piece_type) if mover else 'piece'}'s current square, then calculate the king's legal replies."
+    elif board.is_capture(best):
+        captured = board.piece_at(best.to_square)
+        name = chess.piece_name(captured.piece_type) if captured else "piece"
+        hint = f"A capture is the tactical starting point: examine the {name} on {chess.square_name(best.to_square)}. Before taking it, calculate the opponent's best recapture."
+    else:
+        probe = board.copy()
+        probe.push(best)
+        targets = []
+        for sq, piece in probe.piece_map().items():
+            if piece.color != board.turn and piece.piece_type != chess.KING and best.to_square in probe.attackers(board.turn, sq):
+                targets.append((piece.piece_type, sq))
+        targets.sort(key=lambda entry: ({chess.QUEEN: 9, chess.ROOK: 5, chess.BISHOP: 3, chess.KNIGHT: 3, chess.PAWN: 1}.get(entry[0], 0), entry[1]), reverse=True)
+        if targets:
+            kind, square = targets[0]
+            hint = f"Look for a move by your {chess.piece_name(mover.piece_type) if mover else 'piece'} that creates a direct attack on the {chess.piece_name(kind)} at {chess.square_name(square)}."
+        else:
+            hint = f"The solution is a quiet {chess.piece_name(mover.piece_type) if mover else 'piece'} move. Check which central squares {chess.square_name(best.to_square)} controls and how that improves the next forcing move."
+    if attempt_count >= 2:
+        hint += f" Narrow your candidates to {san[0].lower()} moves; calculate the opponent's strongest reply before committing."
+    return hint
+
+
 def _solution_explanations(item: Puzzle, game: Game, analysis: GameAnalysis | None, line: list[str]):
     board = chess.Board(item.fen)
     explanations = []
@@ -320,23 +466,26 @@ def _solution_explanations(item: Puzzle, game: Game, analysis: GameAnalysis | No
                 captured = chess.Piece(chess.PAWN, not board.turn)
             color = "White" if board.turn == chess.WHITE else "Black"
             san = board.san(move)
-            notes = []
-            if board.is_castling(move):
-                notes.append(f"{color} castles to move the king to safety and connect the rooks.")
-            elif board.is_capture(move):
-                notes.append(f"{san} captures the {_piece_label(captured)} on {chess.square_name(move.to_square)}.")
-            elif move.promotion:
-                notes.append(f"The pawn promotes to a {chess.piece_name(move.promotion)} on {chess.square_name(move.to_square)}.")
-            else:
-                notes.append(f"The {chess.piece_name(mover.piece_type) if mover else 'piece'} moves to {chess.square_name(move.to_square)}.")
-            gives_check = board.gives_check(move)
-            if gives_check:
-                notes.append("It gives check, so the opponent must answer the king threat.")
-            if index == 0 and analysis and analysis.material_sacrifice:
-                notes.append("This is the material investment in the combination. The next forcing moves are the point of the idea; judge the whole line, not only this first exchange.")
+            explanation = _describe_tactical_move(board, move)
             board.push(move)
             move_sans.append(san)
-            explanations.append({"number": index + 1, "color": color.lower(), "san": san, "explanation": " ".join(notes)})
+            # Tie a quiet setup move to the concrete continuation it enables,
+            # rather than presenting SAN as if it were an explanation.
+            if index + 1 < len(line):
+                try:
+                    follow = chess.Move.from_uci(line[index + 1])
+                    if follow in board.legal_moves and (board.is_capture(follow) or board.gives_check(follow)):
+                        explanation += " This prepares the forcing reply " + board.san(follow) + ", which "
+                        if board.is_capture(follow):
+                            target = board.piece_at(follow.to_square)
+                            explanation += f"wins the {_piece_label(target)} on {chess.square_name(follow.to_square)}."
+                        else:
+                            explanation += "checks the king and forces the opponent to respond."
+                except ValueError:
+                    pass
+            if index == 0 and analysis and analysis.material_sacrifice:
+                explanation += " The material investment only makes sense with the forcing continuation shown next; assess the resulting threats and king safety, not just the material count."
+            explanations.append({"number": index + 1, "color": color.lower(), "san": san, "explanation": explanation})
         except ValueError:
             break
     end_material = sum((1 if piece.color == chess.WHITE else -1) * {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3,
@@ -348,6 +497,17 @@ def _solution_explanations(item: Puzzle, game: Game, analysis: GameAnalysis | No
     reason = analysis.classification_reason if analysis and analysis.classification_reason else "This position was selected as a turning point in your game."
     first_move = move_sans[0] if move_sans else item.solution_uci
     summary = f"This position comes from move {item.game_move_number} in your {game.opening_name or 'game'}. {reason} The strongest continuation begins with {first_move}."
+    if explanations:
+        concrete_ideas = []
+        for entry in explanations:
+            text = entry["explanation"]
+            if any(term in text.lower() for term in ("captures", "capture", "check", "fork", "attacks", "attacked", "defender", "controls")):
+                concrete_ideas.append(f"{entry['san']}: {text}")
+            if len(concrete_ideas) == 2:
+                break
+        if not concrete_ideas:
+            concrete_ideas.append(f"{explanations[0]['san']}: {explanations[0]['explanation']}")
+        summary += " The position-specific idea is: " + " ".join(concrete_ideas)
     if analysis:
         try:
             original = chess.Board(item.fen).san(chess.Move.from_uci(analysis.played_move_uci))
@@ -364,11 +524,26 @@ def _solution_explanations(item: Puzzle, game: Game, analysis: GameAnalysis | No
                 summary += f" At the recorded search depth, the engine's preferred move scored about {difference} centipawns better for your side than the move played in the game."
     if analysis and analysis.material_sacrifice:
         if user_material_change >= 0:
-            summary += " The continuation recovers the invested material by the end of this short line."
+            summary += f" This is a material combination: the line gives up material at first, then wins it back by the end of the shown continuation (net material change for you: {user_material_change:+d} points using pawn=1, knight/bishop=3, rook=5, queen=9)."
         else:
-            summary += " Stockfish preferred this material investment at the recorded search depth. Follow the forcing replies above to see the compensation; material count alone does not show the full position."
+            summary += f" This is a positional sacrifice: after the shown line you are still down about {abs(user_material_change)} material points, so the compensation is activity rather than an immediate recapture. The key compensation in this line is the forcing pressure created by its checks, captures, and attacks; the engine judged that pressure worth the material at the recorded search depth."
     elif move_sans:
-        summary += f" Follow the {len(move_sans)} engine-selected plies above: each reply is included so you can see the idea develop instead of judging the first move alone."
+        # Explain the concrete tactical outcome of the line, where available.
+        outcome_board = chess.Board(item.fen)
+        for uci in line:
+            try:
+                move = chess.Move.from_uci(uci)
+                if move not in outcome_board.legal_moves:
+                    break
+                outcome_board.push(move)
+            except ValueError:
+                break
+        if outcome_board.is_checkmate():
+            summary += " The line ends in checkmate."
+        elif outcome_board.is_check():
+            summary += " The final move leaves the opponent in check, so the king threat still has to be answered."
+        else:
+            summary += " The move-by-move notes identify the direct checks, captures, and attacked pieces that make this continuation work."
     return summary, explanations
 
 
@@ -422,49 +597,42 @@ def submit_puzzle_attempt(puzzle_id: uuid.UUID, payload: PuzzleAttemptIn, db: Se
     db.add(attempt)
     db.commit()
     if correct:
-        feedback = "Good choice. This move is the strongest engine continuation in this position."
+        feedback = _describe_tactical_move(board, move)
+        if payload.line_step + 1 < len(line):
+            try:
+                reply_board = board.copy()
+                reply_board.push(move)
+                reply = chess.Move.from_uci(line[payload.line_step + 1])
+                if reply in reply_board.legal_moves:
+                    feedback += f" The expected reply is {reply_board.san(reply)}; notice what it attacks or forces before finding your follow-up."
+            except ValueError:
+                pass
         message = "Correct. You found the move; now find the follow-up." if not line_complete else "Correct. You completed the full puzzle line."
     else:
-        feedback_by_category = {
-            "Brilliant Move": "This position rewards a precise move that keeps the tactical idea working. Your move misses that opportunity.",
-            "Missed Brilliant Opportunity": "The key is to use the available forcing continuation before the position changes.",
-            "Tactical Combination": "Look for a forcing move such as a check, capture, or threat that keeps the initiative.",
-            "Winning Move": "The position contains a way to build or preserve a decisive advantage; this move lets that edge slip.",
-            "Defensive Resource": "This is a difficult position where one accurate defensive move is needed to meet the threat.",
-            "Critical Decision": "This is a turning point: compare forcing continuations and check what the opponent can do next.",
-            "Great Move": "A precise move is needed here to keep the strongest continuation available.",
-            "Tactical Mistake": "Check the opponent's immediate threats and look for a forcing response before committing.",
-        }
-        feedback = feedback_by_category.get(item.puzzle_category, "That move misses the strongest continuation. Look for a more forcing response.")
-        if analysis and analysis.classification_reason:
-            feedback += f" In the original game, the engine noted: {analysis.classification_reason}"
+        feedback = _missed_move_feedback(board, move, chess.Move.from_uci(line[payload.line_step]), analysis,
+                                         chess.WHITE if item.side_to_move == "white" else chess.BLACK)
         message = "Not quite. Review the hint and try another legal move."
     return PuzzleAttemptOut(attempt_id=attempt.id, is_correct=correct, message=message, feedback=feedback,
                             line_complete=line_complete, opponent_move_uci=opponent_move if correct else None)
 
 
 @router.get("/puzzles/{puzzle_id}/hint")
-def puzzle_hint(puzzle_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def puzzle_hint(puzzle_id: uuid.UUID, line_step: int = Query(0, ge=0, le=80),
+                db: Session = Depends(get_db), user: User = Depends(current_user)):
     item, game, _ = _owned_puzzle(db, puzzle_id, user)
     analysis = db.get(GameAnalysis, item.analysis_id)
     board = chess.Board(item.fen)
-    best = chess.Move.from_uci(item.solution_uci)
-    if analysis and analysis.material_sacrifice:
-        hint = "This idea starts by investing material. Do not stop at the sacrifice: look for the forcing check or capture that makes the opponent's king or pieces vulnerable."
-    elif best in board.legal_moves and board.is_capture(best):
-        captured = board.piece_at(best.to_square)
-        hint = f"Look for a loose {chess.piece_name(captured.piece_type) if captured else 'piece'} and check whether the opponent can recapture after you take it. A safe material gain may be enough here."
-    elif best in board.legal_moves and board.gives_check(best):
-        hint = "Start by checking forcing moves. A check narrows the opponent's replies; calculate what you can do after the king responds."
-    elif item.puzzle_category == "Defensive Resource":
-        hint = "First identify the opponent's immediate threat. Look for an active defense that also creates a counter-threat."
-    elif item.puzzle_category == "Tactical Combination":
-        hint = "Look for forcing checks and captures, then calculate the opponent's best reply before choosing your follow-up."
-    else:
-        hint = "Compare checks, captures, and direct threats first. After each candidate, ask what the opponent's strongest reply would be."
-    if game.opening_name:
-        hint += f" This position comes from your {game.opening_name}."
-    return {"hint": hint}
+    line = _puzzle_solution_line(item, analysis)
+    if line_step % 2:
+        raise HTTPException(422, "Hints are available on your turns in the puzzle line.")
+    for uci in line[:line_step]:
+        move = chess.Move.from_uci(uci)
+        if move not in board.legal_moves:
+            raise HTTPException(422, "Puzzle continuation is invalid.")
+        board.push(move)
+    attempts = db.scalar(select(func.count(PuzzleAttempt.id)).where(PuzzleAttempt.user_id == user.id,
+                                                                    PuzzleAttempt.puzzle_id == item.id)) or 0
+    return {"hint": _position_hint(board, line, line_step, attempts)}
 
 
 @router.post("/puzzles/{puzzle_id}/reveal", response_model=PuzzleSolutionOut)
@@ -555,6 +723,31 @@ def analyse_critical_position(puzzle_id: uuid.UUID, ply: int, db: Session = Depe
         return {"ply": row.ply, "alternatives": analyse_position(row.fen)}
     except FileNotFoundError as exc:
         raise HTTPException(503, "Stockfish is unavailable for line analysis.") from exc
+
+
+@router.post("/puzzles/{puzzle_id}/analysis/engine")
+def analyse_user_position(puzzle_id: uuid.UUID, payload: dict = Body(...),
+                          db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Return fresh MultiPV recommendations for any position on the analysis board."""
+    _owned_puzzle(db, puzzle_id, user)
+    completed = db.scalar(select(PuzzleAttempt.id).where(PuzzleAttempt.user_id == user.id,
+                                                         PuzzleAttempt.puzzle_id == puzzle_id,
+                                                         PuzzleAttempt.completed.is_(True)).limit(1))
+    if not completed:
+        raise HTTPException(403, "Complete the puzzle before opening game analysis.")
+    fen = payload.get("fen")
+    if not isinstance(fen, str):
+        raise HTTPException(422, "A valid board position is required.")
+    try:
+        board = chess.Board(fen)
+        if not board.is_valid():
+            raise ValueError("Invalid chess position")
+        from app.services.stockfish_analyzer import analyse_position
+        return {"fen": board.fen(), "alternatives": analyse_position(board.fen())}
+    except ValueError as exc:
+        raise HTTPException(422, "The board position is invalid.") from exc
+    except Exception as exc:
+        raise HTTPException(503, "Stockfish is unavailable for this position.") from exc
 
 
 @router.get("/progress")
