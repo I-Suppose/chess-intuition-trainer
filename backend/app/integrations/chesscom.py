@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 import re
 import httpx
 from app.integrations.errors import RateLimitError
+from app.services.pgn_processor import normalize_game_result
 
 BASE = "https://api.chess.com/pub"
 HEADERS = {"User-Agent": "ChessIntuitionTrainer/0.1 (public game importer)"}
@@ -53,5 +54,5 @@ def normalize_game(game, username, played):
     elif isinstance(time_control, str) and "/time-control/" in time_control:
         time_control = game.get("time_class", "standard").capitalize()
     return {"id": game.get("url", game.get("uuid", game.get("pgn", ""))), "url": game.get("url"), "white": white_name, "black": black_name,
-            "user_colour": user_colour, "opponent": black_name if user_colour == "white" else white_name, "result": white.get("result") if user_colour == "white" else black.get("result"),
+            "user_colour": user_colour, "opponent": black_name if user_colour == "white" else white_name, "result": normalize_game_result(white.get("result") if user_colour == "white" else black.get("result"), user_colour),
             "played_at": played, "time_control": time_control, "opening": opening, "pgn": game.get("pgn", "")}

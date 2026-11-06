@@ -11,7 +11,7 @@ from app.models import ConnectedAccount, Game, GameAnalysis, GameStatus, Platfor
 from app.schemas import AccountConnect, AccountOut, GameOut, GamePageOut, PuzzleAttemptIn, PuzzleAttemptOut, PuzzleSolutionOut
 from app.workers.import_tasks import import_account_games
 from app.integrations import chesscom
-from app.services.pgn_processor import opening_family, opening_line as pgn_opening_line
+from app.services.pgn_processor import opening_family, opening_line as pgn_opening_line, normalize_game_result
 
 router = APIRouter(prefix="/api/v1")
 
@@ -135,11 +135,12 @@ def _opening_profile(db: Session, user: User):
         line = game.opening_line or pgn_opening_line(game.pgn) or "Line unavailable"
         item = grouped.setdefault(name, {"name": name, "games": 0, "wins": 0, "draws": 0, "losses": 0, "lines": {}})
         item["games"] += 1
-        if game.result == "win":
+        outcome = normalize_game_result(game.result, game.user_colour)
+        if outcome == "win":
             item["wins"] += 1
-        elif game.result == "draw":
+        elif outcome == "draw":
             item["draws"] += 1
-        elif game.result == "loss":
+        else:
             item["losses"] += 1
         line_key = f"{game.user_colour or 'unknown'}|{line}"
         line_item = item["lines"].setdefault(line_key, {"line": line, "user_colour": game.user_colour, "games": 0, "wins": 0, "draws": 0, "losses": 0})

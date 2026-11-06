@@ -28,6 +28,20 @@ def opening_family(name: str | None) -> str:
     return re.split(r"\s+(?:Defense|Opening|Game|Variation|Attack|System|Line)\b", value, flags=re.IGNORECASE)[0].strip() or value
 
 
+def normalize_game_result(result: str | None, user_colour: str | None) -> str:
+    """Convert platform-specific termination labels into the player's outcome."""
+    value = (result or "").strip().lower().replace(" ", "")
+    if value in ("win", "won"):
+        return "win"
+    if value in ("loss", "lost", "lose", "checkmated", "resigned", "timeout", "abandoned"):
+        return "loss"
+    if value == "1-0":
+        return "win" if user_colour == "white" else "loss"
+    if value == "0-1":
+        return "win" if user_colour == "black" else "loss"
+    return "draw"
+
+
 def normalize_pgn(raw: str) -> str:
     """Parse and safely re-export one game without comments or side variations."""
     game = chess.pgn.read_game(io.StringIO(raw))
