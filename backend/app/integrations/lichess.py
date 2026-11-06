@@ -7,9 +7,6 @@ from app.integrations.errors import RateLimitError
 
 async def fetch_games(username: str, limit: int = 100, before: int | None = None):
     headers = {"Accept": "application/x-chess-pgn", "User-Agent": "ChessIntuitionTrainer/0.1"}
-    params = {"max": limit, "moves": "true", "opening": "true", "clocks": "false", "evals": "false", "pgnInJson": "false"}
-    if before is not None:
-        params["before"] = before
     async with httpx.AsyncClient(timeout=60, headers=headers) as client:
         profile = await client.get(f"https://lichess.org/api/user/{username}")
         if profile.status_code == 429:
@@ -17,11 +14,29 @@ async def fetch_games(username: str, limit: int = 100, before: int | None = None
         if profile.status_code == 404:
             raise ValueError("Lichess username was not found.")
         profile.raise_for_status()
-        response = await client.get(f"https://lichess.org/api/games/user/{username}", params=params)
-        if response.status_code == 429:
-            raise RateLimitError(int(response.headers.get("Retry-After", "60")))
-        response.raise_for_status()
-        return parse_export(response.text, username)
+        results = []
+        cursor = before
+        while len(results) < limit:
+            batch_limit = min(300, limit - len(results))
+            params = {"max": batch_limit, "moves": "true", "opening": "true", "clocks": "false", "evals": "false", "pgnInJson": "false"}
+            if cursor is not None:
+                params["before"] = cursor
+            response = await client.get(f"https://lichess.org/api/games/user/{username}", params=params)
+            if response.status_code == 429:
+                raise RateLimitError(int(response.headers.get("Retry-After", "60")))
+            response.raise_for_status()
+            batch = parse_export(response.text, username)
+            if not batch:
+                break
+            results.extend(batch)
+            dates = [game["played_at"] for game in batch if game.get("played_at")]
+            if len(batch) < batch_limit or not dates:
+                break
+            next_cursor = int(min(dates).timestamp() * 1000) - 1
+            if cursor is not None and next_cursor >= cursor:
+                break
+            cursor = next_cursor
+        return results[:limit]
 
 
 def parse_export(text: str, username: str):

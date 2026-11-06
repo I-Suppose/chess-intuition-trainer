@@ -1,5 +1,31 @@
 import io
+import re
 import chess.pgn
+
+
+def opening_family(name: str | None) -> str:
+    """Collapse named opening variations to a player-friendly family label."""
+    value = re.sub(r"\s+", " ", (name or "").replace("’", "'").strip())
+    if not value:
+        return "Opening not classified"
+    families = [
+        (r"queen'?s gambit", "Queen's Gambit"), (r"queen'?s pawn", "Queen's Pawn Openings"),
+        (r"king'?s indian", "King's Indian Defense"), (r"king'?s gambit", "King's Gambit"),
+        (r"queen'?s indian", "Queen's Indian Defense"), (r"nimzo[- ]indian", "Nimzo-Indian Defense"),
+        (r"caro[- ]?kann", "Caro-Kann Defense"), (r"sicilian", "Sicilian Defense"),
+        (r"french", "French Defense"), (r"ruy lopez|spanish opening", "Ruy Lopez"),
+        (r"italian game", "Italian Game"), (r"english opening", "English Opening"),
+        (r"r[eé]ti", "Réti Opening"), (r"gr[uü]nfeld", "Grünfeld Defense"),
+        (r"slav", "Slav Defense"), (r"scandinavian", "Scandinavian Defense"),
+        (r"dutch", "Dutch Defense"), (r"pirc", "Pirc Defense"),
+        (r"ale[ck]hine", "Alekhine Defense"), (r"king'?s pawn", "King's Pawn Openings"),
+        (r"vienna", "Vienna Game"), (r"petrov|russian game", "Petrov Defense"),
+        (r"modern defense", "Modern Defense"),
+    ]
+    for pattern, family in families:
+        if re.search(pattern, value, re.IGNORECASE):
+            return family
+    return re.split(r"\s+(?:Defense|Opening|Game|Variation|Attack|System|Line)\b", value, flags=re.IGNORECASE)[0].strip() or value
 
 
 def normalize_pgn(raw: str) -> str:

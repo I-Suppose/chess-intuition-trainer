@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import re
 import httpx
 from app.integrations.errors import RateLimitError
 
@@ -45,6 +46,12 @@ def normalize_game(game, username, played):
     user_colour = "white" if (white_name or "").casefold() == username.casefold() else "black"
     eco = game.get("eco")
     opening = eco.rsplit("/", 1)[-1].replace("-", " ") if isinstance(eco, str) and eco.startswith("http") else eco
+    time_control = game.get("time_control")
+    if isinstance(time_control, str) and re.fullmatch(r"\d+", time_control):
+        seconds = int(time_control)
+        time_control = f"{seconds // 60}+{seconds % 60}"
+    elif isinstance(time_control, str) and "/time-control/" in time_control:
+        time_control = game.get("time_class", "standard").capitalize()
     return {"id": game.get("url", game.get("uuid", game.get("pgn", ""))), "url": game.get("url"), "white": white_name, "black": black_name,
             "user_colour": user_colour, "opponent": black_name if user_colour == "white" else white_name, "result": white.get("result") if user_colour == "white" else black.get("result"),
-            "played_at": played, "time_control": game.get("time_control"), "opening": opening, "pgn": game.get("pgn", "")}
+            "played_at": played, "time_control": time_control, "opening": opening, "pgn": game.get("pgn", "")}

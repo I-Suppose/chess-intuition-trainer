@@ -6,11 +6,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from app.auth import current_user
 from app.database import get_db
+from app.core.config import settings
 from app.models import ConnectedAccount, Game, GameAnalysis, GameStatus, Platform, Puzzle, PuzzleAttempt, SyncStatus, User
-from app.schemas import AccountConnect, AccountOut, GameOut, PuzzleAttemptIn, PuzzleAttemptOut, PuzzleSolutionOut
+from app.schemas import AccountConnect, AccountOut, GameOut, GamePageOut, PuzzleAttemptIn, PuzzleAttemptOut, PuzzleSolutionOut
 from app.workers.import_tasks import import_account_games
 from app.integrations import chesscom
-from app.services.pgn_processor import opening_line as pgn_opening_line
+from app.services.pgn_processor import opening_family, opening_line as pgn_opening_line
 
 router = APIRouter(prefix="/api/v1")
 
@@ -22,16 +23,16 @@ def owned_account(db: Session, account_id: uuid.UUID, user: User):
     return account
 
 
-def queue_import(account_id: uuid.UUID, older: bool = False):
+def queue_import(account_id: uuid.UUID, older: bool = False, limit: int | None = None):
     try:
-        return import_account_games.delay(str(account_id), older=older)
+        return import_account_games.delay(str(account_id), older=older, limit=limit)
     except Exception as exc:
         raise HTTPException(status_code=503, detail="The game import queue is unavailable. Your account is saved; please retry shortly.") from exc
 
 
 @router.get("/accounts", response_model=list[AccountOut])
 def accounts(db: Session = Depends(get_db), user: User = Depends(current_user)):
-    rows = db.execute(select(ConnectedAccount, func.count(Game.id)).outerjoin(Game).where(ConnectedAccount.user_id == user.id, ConnectedAccount.is_connected.is_(True)).group_by(ConnectedAccount.id).order_by(ConnectedAccount.connected_at.desc())).all()
+    rows = db.execute(select(ConnectedAccount, func.count(Game.id)).outerjoin(Game, (Game.account_id == ConnectedAccount.id) & (Game.import_status == GameStatus.imported)).where(ConnectedAccount.user_id == user.id, ConnectedAccount.is_connected.is_(True)).group_by(ConnectedAccount.id).order_by(ConnectedAccount.connected_at.desc())).all()
     return [AccountOut(id=a.id, platform=a.platform, username=a.username, last_synced_at=a.last_synced_at, sync_status=a.sync_status, game_count=count) for a, count in rows]
 
 
@@ -54,30 +55,36 @@ async def connect(payload: AccountConnect, db: Session = Depends(get_db), user: 
         existing.is_connected = True
         existing.sync_status = SyncStatus.pending
         db.commit()
-        queue_import(existing.id)
+        queue_import(existing.id, limit=settings.initial_game_import_limit)
         account = existing
     else:
         account = ConnectedAccount(user_id=user.id, platform=payload.platform, username=username)
         db.add(account)
         db.commit()
         db.refresh(account)
-        queue_import(account.id)
-    game_count = db.scalar(select(func.count(Game.id)).where(Game.account_id == account.id)) or 0
+        queue_import(account.id, limit=settings.initial_game_import_limit)
+    game_count = db.scalar(select(func.count(Game.id)).where(Game.account_id == account.id, Game.import_status == GameStatus.imported)) or 0
     return AccountOut(id=account.id, platform=account.platform, username=account.username, last_synced_at=account.last_synced_at, sync_status=account.sync_status, game_count=game_count)
 
 
 @router.post("/accounts/{account_id}/sync", status_code=202)
-def sync(account_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def sync(account_id: uuid.UUID, limit: int = Query(100, ge=1, le=1000),
+         db: Session = Depends(get_db), user: User = Depends(current_user)):
     account = owned_account(db, account_id, user)
-    queue_import(account.id)
-    return {"status": "queued"}
+    account.sync_status = SyncStatus.pending
+    db.commit()
+    queue_import(account.id, limit=limit)
+    return {"status": "queued", "limit": limit}
 
 
 @router.post("/games/import-older", status_code=202)
-def import_older(account_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def import_older(account_id: uuid.UUID, limit: int = Query(100, ge=1, le=1000),
+                 db: Session = Depends(get_db), user: User = Depends(current_user)):
     account = owned_account(db, account_id, user)
-    queue_import(account.id, older=True)
-    return {"status": "queued"}
+    account.sync_status = SyncStatus.pending
+    db.commit()
+    queue_import(account.id, older=True, limit=limit)
+    return {"status": "queued", "limit": limit}
 
 
 @router.delete("/accounts/{account_id}", status_code=204)
@@ -87,16 +94,28 @@ def disconnect(account_id: uuid.UUID, db: Session = Depends(get_db), user: User 
     db.commit()
 
 
-@router.get("/games", response_model=list[GameOut])
-def games(page: int = Query(1, ge=1), page_size: int = Query(30, ge=1, le=100), platform: Platform | None = None,
+@router.get("/games", response_model=GamePageOut)
+def games(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100), platform: Platform | None = None,
           opening: str | None = None,
           db: Session = Depends(get_db), user: User = Depends(current_user)):
-    query = select(Game).join(ConnectedAccount).where(ConnectedAccount.user_id == user.id)
+    query = select(Game).join(ConnectedAccount).where(ConnectedAccount.user_id == user.id,
+                                                      Game.import_status == GameStatus.imported)
     if platform:
         query = query.where(ConnectedAccount.platform == platform)
     if opening:
-        query = query.where(func.coalesce(Game.opening_name, "Opening not classified") == opening)
-    return db.scalars(query.order_by(Game.played_at.desc().nullslast(), Game.id).offset((page - 1) * page_size).limit(page_size)).all()
+        names = db.scalars(select(Game.opening_name).join(ConnectedAccount)
+                           .where(ConnectedAccount.user_id == user.id, Game.opening_name.is_not(None)).distinct()).all()
+        matching = [name for name in names if opening_family(name) == opening]
+        if opening == "Opening not classified":
+            query = query.where(Game.opening_name.is_(None))
+        elif matching:
+            query = query.where(Game.opening_name.in_(matching))
+        else:
+            query = query.where(Game.opening_name == opening)
+    total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
+    rows = db.scalars(query.order_by(Game.played_at.desc().nullslast(), Game.id)
+                      .offset((page - 1) * page_size).limit(page_size)).all()
+    return GamePageOut(items=rows, total=total, page=page, page_size=page_size)
 
 
 @router.get("/games/{game_id}", response_model=GameOut)
@@ -112,7 +131,7 @@ def _opening_profile(db: Session, user: User):
                                                                                       Game.import_status == GameStatus.imported)).all()
     grouped = {}
     for game, platform in rows:
-        name = game.opening_name or "Opening not classified"
+        name = opening_family(game.opening_name)
         line = game.opening_line or pgn_opening_line(game.pgn) or "Line unavailable"
         item = grouped.setdefault(name, {"name": name, "games": 0, "wins": 0, "draws": 0, "losses": 0, "lines": {}})
         item["games"] += 1
@@ -132,6 +151,7 @@ def _opening_profile(db: Session, user: User):
     for item in grouped.values():
         games_count = item["games"]
         item["score_rate"] = round((item["wins"] + item["draws"] * 0.5) / games_count * 100, 1) if games_count else 0
+        item["win_rate"] = round(item["wins"] / games_count * 100, 1) if games_count else 0
         item["lines"] = sorted(item["lines"].values(), key=lambda line: (-line["games"], line["line"]))
         result.append(item)
     return sorted(result, key=lambda item: (-item["games"], item["name"]))
@@ -145,17 +165,65 @@ def openings(db: Session = Depends(get_db), user: User = Depends(current_user)):
 
 @router.get("/games/{game_id}/analysis")
 def game_analysis(game_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(current_user)):
-    owned = db.scalar(select(Game.id).join(ConnectedAccount).where(Game.id == game_id, ConnectedAccount.user_id == user.id))
-    if not owned:
+    row = db.execute(select(Game, ConnectedAccount).join(ConnectedAccount)
+                     .where(Game.id == game_id, ConnectedAccount.user_id == user.id)).first()
+    if not row:
         raise HTTPException(404, "Game not found.")
+    game, account = row
     rows = db.scalars(select(GameAnalysis).where(GameAnalysis.game_id == game_id).order_by(GameAnalysis.ply)).all()
-    return [{"move_number": row.move_number, "ply": row.ply, "fen": row.fen, "side_to_move": row.side_to_move,
-             "played_move_uci": row.played_move_uci, "best_move_uci": row.best_move_uci,
-             "alternative_moves": row.alternative_moves, "evaluation_before": row.evaluation_before,
-             "evaluation_after": row.evaluation_after, "principal_variation": row.principal_variation,
-             "engine_depth": row.engine_depth, "move_classification": row.move_classification,
-             "classification_confidence": row.classification_confidence, "classification_reason": row.classification_reason,
-             "material_sacrifice": row.material_sacrifice} for row in rows]
+    return {"game": {"id": game.id, "opening_name": opening_family(game.opening_name),
+                      "opening_line": game.opening_line, "white_player": game.white_player,
+                      "black_player": game.black_player, "user_colour": game.user_colour,
+                      "opponent_username": game.opponent_username, "result": game.result,
+                      "played_at": game.played_at, "platform": account.platform,
+                      "game_url": game.game_url},
+            "pgn": game.pgn,
+            "critical_points": [{"move_number": move.move_number, "ply": move.ply, "fen": move.fen,
+                                 "played_move_uci": move.played_move_uci, "best_move_uci": move.best_move_uci,
+                                 "alternatives": move.alternative_moves, "evaluation_before": move.evaluation_before,
+                                 "evaluation_after": move.evaluation_after, "principal_variation": move.principal_variation,
+                                 "classification": move.move_classification, "confidence": move.classification_confidence,
+                                 "reason": move.classification_reason} for move in rows
+                                if move.move_classification not in ("BEST", "GOOD", "UNCLASSIFIED")]}
+
+
+@router.post("/games/{game_id}/analysis/engine")
+def analyse_game_position(game_id: uuid.UUID, payload: dict = Body(...),
+                          db: Session = Depends(get_db), user: User = Depends(current_user)):
+    game = db.scalar(select(Game).join(ConnectedAccount).where(Game.id == game_id,
+                                                               ConnectedAccount.user_id == user.id))
+    if not game:
+        raise HTTPException(404, "Game not found.")
+    fen = payload.get("fen")
+    if not isinstance(fen, str):
+        raise HTTPException(422, "A valid board position is required.")
+    try:
+        board = chess.Board(fen)
+        if not board.is_valid():
+            raise ValueError("Invalid chess position")
+        from app.services.stockfish_analyzer import analyse_position
+        return {"fen": board.fen(), "alternatives": analyse_position(board.fen())}
+    except ValueError as exc:
+        raise HTTPException(422, "The board position is invalid.") from exc
+    except Exception as exc:
+        raise HTTPException(503, "Stockfish is unavailable for this position.") from exc
+
+
+@router.get("/games/{game_id}/analysis/position/{ply}")
+def analyse_game_critical_position(game_id: uuid.UUID, ply: int,
+                                   db: Session = Depends(get_db), user: User = Depends(current_user)):
+    game = db.scalar(select(Game).join(ConnectedAccount).where(Game.id == game_id,
+                                                               ConnectedAccount.user_id == user.id))
+    if not game:
+        raise HTTPException(404, "Game not found.")
+    row = db.scalar(select(GameAnalysis).where(GameAnalysis.game_id == game_id, GameAnalysis.ply == ply))
+    if not row:
+        raise HTTPException(404, "Analyzed position not found.")
+    try:
+        from app.services.stockfish_analyzer import analyse_position
+        return {"ply": row.ply, "alternatives": analyse_position(row.fen)}
+    except FileNotFoundError as exc:
+        raise HTTPException(503, "Stockfish is unavailable for line analysis.") from exc
 
 
 @router.post("/games/{game_id}/analysis/retry", status_code=202)

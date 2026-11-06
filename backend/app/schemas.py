@@ -46,6 +46,13 @@ class GameOut(BaseModel):
     analysis_status: GameStatus
 
 
+class GamePageOut(BaseModel):
+    items: list[GameOut]
+    total: int
+    page: int
+    page_size: int
+
+
 class PuzzleAttemptIn(BaseModel):
     move_uci: str = Field(min_length=4, max_length=5, pattern=r"^[a-h][1-8][a-h][1-8][qrbn]?$")
     line_step: int = Field(default=0, ge=0, le=80)
