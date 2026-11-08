@@ -34,6 +34,7 @@ class User(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     email: Mapped[str | None] = mapped_column(String(320))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    combine_accounts: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     accounts: Mapped[list["ConnectedAccount"]] = relationship(back_populates="user")
 
 

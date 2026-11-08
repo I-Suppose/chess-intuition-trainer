@@ -15,7 +15,9 @@ class Settings(BaseSettings):
     stockfish_multipv: int = 3
     stockfish_depth: int = 16
     stockfish_time_limit: float = 2.0
-    stockfish_scan_time_limit: float = 0.25
+    stockfish_game_time_limit: float = 0.75
+    stockfish_scan_depth: int = 9
+    stockfish_scan_time_limit: float = 0.1
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
 

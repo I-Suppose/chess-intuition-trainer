@@ -28,6 +28,20 @@ def opening_family(name: str | None) -> str:
     return re.split(r"\s+(?:Defense|Opening|Game|Variation|Attack|System|Line)\b", value, flags=re.IGNORECASE)[0].strip() or value
 
 
+def normalize_time_control(value: str | None) -> str | None:
+    """Format the base clock in minutes while retaining the increment in seconds."""
+    if not value:
+        return value
+    match = re.fullmatch(r"\s*(\d+)(?:\+(\d+))?\s*", value)
+    if not match:
+        return value
+    seconds = int(match.group(1))
+    minutes = seconds / 60
+    base = str(int(minutes)) if minutes.is_integer() else f"{minutes:g}"
+    increment = match.group(2) or "0"
+    return f"{base}+{increment}"
+
+
 def normalize_game_result(result: str | None, user_colour: str | None) -> str:
     """Convert platform-specific termination labels into the player's outcome."""
     value = (result or "").strip().lower().replace(" ", "")

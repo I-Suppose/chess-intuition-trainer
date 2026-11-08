@@ -1,14 +1,15 @@
 import uuid
+from datetime import datetime, timezone
 import httpx
 import chess
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 from app.auth import current_user
 from app.database import get_db
 from app.core.config import settings
 from app.models import ConnectedAccount, Game, GameAnalysis, GameStatus, Platform, Puzzle, PuzzleAttempt, SyncStatus, User
-from app.schemas import AccountConnect, AccountOut, GameOut, GamePageOut, PuzzleAttemptIn, PuzzleAttemptOut, PuzzleSolutionOut
+from app.schemas import AccountConnect, AccountOut, AccountPreferencesIn, GameOut, GamePageOut, PuzzleAttemptIn, PuzzleAttemptOut, PuzzleSolutionOut
 from app.workers.import_tasks import import_account_games
 from app.integrations import chesscom
 from app.services.pgn_processor import opening_family, opening_line as pgn_opening_line, normalize_game_result
@@ -36,6 +37,31 @@ def accounts(db: Session = Depends(get_db), user: User = Depends(current_user)):
     return [AccountOut(id=a.id, platform=a.platform, username=a.username, last_synced_at=a.last_synced_at, sync_status=a.sync_status, game_count=count) for a, count in rows]
 
 
+@router.get("/accounts/preferences")
+def account_preferences(user: User = Depends(current_user)):
+    return {"combine_accounts": user.combine_accounts}
+
+
+@router.patch("/accounts/preferences")
+def update_account_preferences(payload: AccountPreferencesIn, db: Session = Depends(get_db),
+                               user: User = Depends(current_user)):
+    user.combine_accounts = payload.combine_accounts
+    if not payload.combine_accounts:
+        keep = db.scalar(select(ConnectedAccount).where(ConnectedAccount.user_id == user.id,
+                                                        ConnectedAccount.is_connected.is_(True))
+                          .order_by(ConnectedAccount.connected_at.desc()).limit(1))
+        if keep:
+            others = db.scalars(select(ConnectedAccount).where(ConnectedAccount.user_id == user.id,
+                                                               ConnectedAccount.id != keep.id)).all()
+        else:
+            others = db.scalars(select(ConnectedAccount).where(ConnectedAccount.user_id == user.id)).all()
+        for account in others:
+            db.execute(delete(Game).where(Game.account_id == account.id))
+            db.delete(account)
+    db.commit()
+    return {"combine_accounts": user.combine_accounts}
+
+
 @router.post("/accounts/connect", response_model=AccountOut, status_code=202)
 async def connect(payload: AccountConnect, db: Session = Depends(get_db), user: User = Depends(current_user)):
     username = payload.username.strip()
@@ -51,9 +77,18 @@ async def connect(payload: AccountConnect, db: Session = Depends(get_db), user: 
     except Exception as exc:
         raise HTTPException(502, "Could not validate that account right now. Please try again.") from exc
     existing = db.scalar(select(ConnectedAccount).where(ConnectedAccount.user_id == user.id, ConnectedAccount.platform == payload.platform, func.lower(ConnectedAccount.username) == username.lower()))
+    if not user.combine_accounts:
+        current_accounts = db.scalars(select(ConnectedAccount).where(ConnectedAccount.user_id == user.id)).all()
+        for current in current_accounts:
+            if existing and current.id == existing.id:
+                continue
+            db.execute(delete(Game).where(Game.account_id == current.id))
+            db.delete(current)
+        db.flush()
     if existing:
         existing.is_connected = True
         existing.sync_status = SyncStatus.pending
+        existing.connected_at = datetime.now(timezone.utc)
         db.commit()
         queue_import(existing.id, limit=settings.initial_game_import_limit)
         account = existing
@@ -90,7 +125,8 @@ def import_older(account_id: uuid.UUID, limit: int = Query(100, ge=1, le=1000),
 @router.delete("/accounts/{account_id}", status_code=204)
 def disconnect(account_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(current_user)):
     account = owned_account(db, account_id, user)
-    account.is_connected = False
+    db.execute(delete(Game).where(Game.account_id == account.id))
+    db.delete(account)
     db.commit()
 
 
@@ -248,7 +284,7 @@ def retry_game_analysis(game_id: uuid.UUID, db: Session = Depends(get_db), user:
 
 @router.get("/puzzles")
 def puzzles(category: str | None = None, completed: bool | None = None, platform: Platform | None = None,
-            opening: str | None = None, page: int = Query(1, ge=1), page_size: int = Query(24, ge=1, le=100),
+            opening: str | None = None, page: int = Query(1, ge=1), page_size: int = Query(24, ge=1, le=1000),
             db: Session = Depends(get_db), user: User = Depends(current_user)):
     completed_ids = select(PuzzleAttempt.puzzle_id).where(PuzzleAttempt.user_id == user.id, PuzzleAttempt.completed.is_(True)).distinct()
     query = select(Puzzle, Game, ConnectedAccount).join(Game, Puzzle.game_id == Game.id).join(ConnectedAccount, Game.account_id == ConnectedAccount.id).where(Puzzle.user_id == user.id)

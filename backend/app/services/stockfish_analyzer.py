@@ -94,15 +94,15 @@ def _analyse_game(pgn: str, user_colour: str):
     records = []
     with chess.engine.SimpleEngine.popen_uci(_engine_path()) as engine:
         engine.configure({"Threads": settings.stockfish_threads, "Hash": settings.stockfish_hash_mb})
-        scan_limit = chess.engine.Limit(depth=min(settings.stockfish_depth, 10), time=settings.stockfish_scan_time_limit)
-        deep_limit = chess.engine.Limit(depth=settings.stockfish_depth, time=settings.stockfish_time_limit)
+        scan_limit = chess.engine.Limit(depth=min(settings.stockfish_depth, settings.stockfish_scan_depth), time=settings.stockfish_scan_time_limit)
+        deep_limit = chess.engine.Limit(depth=settings.stockfish_depth, time=settings.stockfish_game_time_limit)
         board = parsed.board()
         for ply, actual_move in enumerate(parsed.mainline_moves(), start=1):
             if board.turn == user_side and not board.is_game_over():
                 fen = board.fen()
                 move_number = board.fullmove_number
                 played_san = board.san(actual_move)
-                infos = engine.analyse(board, scan_limit, multipv=settings.stockfish_multipv)
+                infos = engine.analyse(board, scan_limit, multipv=min(2, settings.stockfish_multipv))
                 if isinstance(infos, dict):
                     infos = [infos]
                 infos = [info for info in infos if info.get("pv")]
@@ -130,9 +130,8 @@ def _analyse_game(pgn: str, user_colour: str):
                 scan_sacrifice = _sacrifice(board, best_pv, user_side)
                 scan_forcing = _forcing(board, best_move)
                 scan_actual_best = actual_move == best_move
-                likely_turning_point = (scan_loss >= 45 or scan_sacrifice or
-                                         (second_gap >= 50 and (scan_actual_best or scan_forcing)) or
-                                         (best_cp >= 280 and scan_forcing))
+                likely_turning_point = (scan_loss >= 75 or scan_sacrifice or
+                                         (best_cp >= 280 and scan_forcing and scan_actual_best))
                 if likely_turning_point:
                     infos = engine.analyse(board, deep_limit, multipv=settings.stockfish_multipv)
                     if isinstance(infos, dict):

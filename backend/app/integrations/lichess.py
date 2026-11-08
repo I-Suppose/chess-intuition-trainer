@@ -3,7 +3,7 @@ import io
 import chess.pgn
 import httpx
 from app.integrations.errors import RateLimitError
-from app.services.pgn_processor import normalize_game_result
+from app.services.pgn_processor import normalize_game_result, normalize_time_control
 
 
 async def fetch_games(username: str, limit: int = 100, before: int | None = None):
@@ -60,5 +60,5 @@ def parse_export(text: str, username: str):
         games.append({"id": uid or h.get("GameId") or h.get("UTCDate", "unknown") + ":" + (white or "") + ":" + (black or ""),
                       "url": uid or None, "white": white, "black": black, "user_colour": colour,
                       "opponent": black if colour == "white" else white, "result": user_result, "played_at": date_value(),
-                      "time_control": h.get("TimeControl"), "opening": h.get("Opening"), "pgn": game.accept(chess.pgn.StringExporter(headers=True, variations=False, comments=False))})
+                      "time_control": normalize_time_control(h.get("TimeControl")), "opening": h.get("Opening"), "pgn": game.accept(chess.pgn.StringExporter(headers=True, variations=False, comments=False))})
     return games

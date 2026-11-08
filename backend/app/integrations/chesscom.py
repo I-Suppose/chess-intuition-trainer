@@ -1,8 +1,7 @@
 from datetime import datetime, timezone
-import re
 import httpx
 from app.integrations.errors import RateLimitError
-from app.services.pgn_processor import normalize_game_result
+from app.services.pgn_processor import normalize_game_result, normalize_time_control
 
 BASE = "https://api.chess.com/pub"
 HEADERS = {"User-Agent": "ChessIntuitionTrainer/0.1 (public game importer)"}
@@ -48,11 +47,10 @@ def normalize_game(game, username, played):
     eco = game.get("eco")
     opening = eco.rsplit("/", 1)[-1].replace("-", " ") if isinstance(eco, str) and eco.startswith("http") else eco
     time_control = game.get("time_control")
-    if isinstance(time_control, str) and re.fullmatch(r"\d+", time_control):
-        seconds = int(time_control)
-        time_control = f"{seconds // 60}+{seconds % 60}"
-    elif isinstance(time_control, str) and "/time-control/" in time_control:
+    if isinstance(time_control, str) and "/time-control/" in time_control:
         time_control = game.get("time_class", "standard").capitalize()
+    else:
+        time_control = normalize_time_control(time_control)
     return {"id": game.get("url", game.get("uuid", game.get("pgn", ""))), "url": game.get("url"), "white": white_name, "black": black_name,
             "user_colour": user_colour, "opponent": black_name if user_colour == "white" else white_name, "result": normalize_game_result(white.get("result") if user_colour == "white" else black.get("result"), user_colour),
             "played_at": played, "time_control": time_control, "opening": opening, "pgn": game.get("pgn", "")}
