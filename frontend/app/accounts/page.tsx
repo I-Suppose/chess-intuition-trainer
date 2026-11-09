@@ -1,4 +1,3 @@
-'use client';
 import { FormEvent, useEffect, useState } from 'react';
 import { RefreshCw, Unlink, Link2, ExternalLink, Combine } from 'lucide-react';
 import AppShell from '@/components/app-shell';

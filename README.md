@@ -24,7 +24,7 @@ Full application account deletion and advanced coach features from the PRD are n
 
 1. Install Docker Desktop, Node.js 20+, and Python 3.12+ (or use the included containers for Python and Node).
 2. Create a Supabase project and enable email/password authentication.
-3. Copy `.env.example` to `.env` and set `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, and `NEXT_PUBLIC_SUPABASE_ANON_KEY`. The public and server URLs should refer to the same Supabase project. Keep the service role key private.
+3. Copy `.env.example` to `.env` and set `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `VITE_SUPABASE_URL`, and `VITE_SUPABASE_ANON_KEY`. The public and server URLs should refer to the same Supabase project. Keep the service role key private.
 4. From this directory, start the app:
 
    ```powershell
@@ -66,7 +66,7 @@ npm install
 npm run dev
 ```
 
-Set `NEXT_PUBLIC_API_URL` to the API base URL with `/api/v1` appended. The frontend Supabase variables are embedded at build time in Docker, so rebuild the frontend container after changing them.
+Set `VITE_API_URL` to the API base URL with `/api/v1` appended. The frontend is a Vite-built React single-page app using React Router; its `VITE_*` settings are embedded at build time in Docker, so rebuild the frontend container after changing them.
 
 ## Import behavior and configuration
 
@@ -81,4 +81,4 @@ Set `NEXT_PUBLIC_API_URL` to the API base URL with `/api/v1` appended. The front
 - `/api/v1/games/{game_id}/analysis` returns evaluated user decision positions. `/api/v1/puzzles` lists puzzles in category priority order, with newer games first within a category.
 - Puzzle attempts are checked against legal moves and the engine's best move plus alternatives within 0.25 pawns. The solution is available after an attempt.
 
-See `.env.example` for the complete configuration list. Never commit `.env` or place the Supabase service role key in a `NEXT_PUBLIC_` variable.
+See `.env.example` for the complete configuration list. Never commit `.env` or place the Supabase service role key in a `VITE_` variable; Vite exposes those values to the browser.

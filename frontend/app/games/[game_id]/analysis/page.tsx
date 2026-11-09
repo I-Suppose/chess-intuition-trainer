@@ -1,4 +1,3 @@
-'use client';
-import { useParams } from 'next/navigation';
+import { useParams } from 'react-router-dom';
 import GameAnalysisView from '@/components/game-analysis-view';
-export default function GameAnalysis(){const params=useParams<{game_id:string}>();return <GameAnalysisView params={{puzzle_id:params.game_id}} mode="game"/>;}
+export default function GameAnalysis(){const {game_id=''}=useParams();return <GameAnalysisView params={{puzzle_id:game_id}} mode="game"/>;}

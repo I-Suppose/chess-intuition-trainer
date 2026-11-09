@@ -1,5 +1,6 @@
 .env
 .next/
+frontend/dist/
 node_modules/
 __pycache__/
 .pytest_cache/
