@@ -1,4 +1,4 @@
-app = "chess-intuition-trainer-change-me"
+app = "chess-intuition-trainer"
 primary_region = "sin"
 
 [build]

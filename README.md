@@ -74,10 +74,10 @@ The repository has separate `frontend/` and `backend/` folders, so Fly cannot de
 
 1. Install `flyctl` and sign in with `fly auth login`.
 2. In `fly.toml`, replace `chess-intuition-trainer-change-me` with an app name that is available. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` under `[build.args]` to the public URL and anon key for your Supabase project. These Vite values are included in the browser build; never put the Supabase service-role key there.
-3. From the repository root, create the Fly app without deploying yet:
+3. From the repository root, create the Fly app without deploying yet if you have not already created it:
 
    ```powershell
-   fly launch --no-deploy --name your-unique-chess-trainer-name
+   fly launch --no-deploy --name chess-intuition-trainer
    ```
 
    Choose not to create an additional database if prompted; the app needs PostgreSQL and Redis configured as described next.
@@ -85,24 +85,24 @@ The repository has separate `frontend/` and `backend/` folders, so Fly cannot de
 
    ```powershell
    fly mpg create
-   fly mpg attach YOUR_CLUSTER_ID --app your-unique-chess-trainer-name
+   fly mpg attach YOUR_CLUSTER_ID --app chess-intuition-trainer
    ```
 
 5. Create an Upstash Redis service from Fly's Redis section, then set its private connection URL and the Supabase server credentials as Fly secrets:
 
    ```powershell
-   fly secrets set REDIS_URL="YOUR_PRIVATE_REDIS_URL" SUPABASE_URL="YOUR_SUPABASE_URL" SUPABASE_ANON_KEY="YOUR_SUPABASE_ANON_KEY" SUPABASE_SERVICE_ROLE_KEY="YOUR_SUPABASE_SERVICE_ROLE_KEY" --app your-unique-chess-trainer-name
+   fly secrets set REDIS_URL="YOUR_PRIVATE_REDIS_URL" SUPABASE_URL="YOUR_SUPABASE_URL" SUPABASE_ANON_KEY="YOUR_SUPABASE_ANON_KEY" SUPABASE_SERVICE_ROLE_KEY="YOUR_SUPABASE_SERVICE_ROLE_KEY" --app chess-intuition-trainer
    ```
 
 6. Deploy from the repository root:
 
    ```powershell
-   fly deploy --app your-unique-chess-trainer-name
-   fly status --app your-unique-chess-trainer-name
-   fly logs --app your-unique-chess-trainer-name
+   fly deploy --app chess-intuition-trainer
+   fly status --app chess-intuition-trainer
+   fly logs --app chess-intuition-trainer
    ```
 
-The Fly release command runs the database migrations before the web and worker processes start. The Dockerfile and Fly configuration are at the repository root so `fly launch` and `fly deploy` see them.
+Deploy from this repository's root and omit `--image`: that makes Fly build the root Dockerfile, which contains both the React frontend and the FastAPI/Alembic backend. Passing `--image registry.fly.io/...` deploys that prebuilt image instead of building this source tree. The Fly release command runs database migrations before the web and worker processes start.
 
 ## Import behavior and configuration
 
