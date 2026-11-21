@@ -6,8 +6,6 @@ primary_region = "sin"
 
   [build.args]
     VITE_API_URL = "/api/v1"
-    VITE_SUPABASE_URL = ""
-    VITE_SUPABASE_ANON_KEY = ""
 
 [deploy]
   release_command = "alembic upgrade head"

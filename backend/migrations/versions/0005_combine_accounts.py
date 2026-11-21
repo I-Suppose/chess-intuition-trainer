@@ -9,18 +9,12 @@ depends_on = None
 
 
 def upgrade():
-    # Existing users did not have an account-combining preference. Keep their
-    # most recently connected live profile so the default is a single source.
-    op.execute("""
-        DELETE FROM connected_accounts
-        WHERE id NOT IN (
-            SELECT DISTINCT ON (user_id) id
-            FROM connected_accounts
-            WHERE is_connected = TRUE
-            ORDER BY user_id, connected_at DESC
-        )
-    """)
-    op.add_column("users", sa.Column("combine_accounts", sa.Boolean(), nullable=False, server_default=sa.false()))
+    bind = op.get_bind()
+    # This migration only adds the preference. Preserve all connected accounts
+    # and their imported games while upgrading existing installations.
+    user_columns = {column["name"] for column in sa.inspect(bind).get_columns("users")}
+    if "combine_accounts" not in user_columns:
+        op.add_column("users", sa.Column("combine_accounts", sa.Boolean(), nullable=False, server_default=sa.false()))
 
 
 def downgrade():

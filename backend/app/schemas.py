@@ -1,4 +1,5 @@
 import uuid
+import re
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.models import Platform, SyncStatus, GameStatus
@@ -19,6 +20,38 @@ class AccountConnect(BaseModel):
 
 class AccountPreferencesIn(BaseModel):
     combine_accounts: bool
+
+
+class RegisterRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=8, max_length=1024)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
+            raise ValueError("Enter a valid email address.")
+        return value
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=1, max_length=1024)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
+            raise ValueError("Enter a valid email address.")
+        return value
+
+
+class AuthResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    email: str
 
 
 class AccountOut(BaseModel):

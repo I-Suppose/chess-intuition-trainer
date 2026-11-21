@@ -1,8 +1,7 @@
 import enum
 import uuid
 from datetime import datetime
-from sqlalchemy import JSON, Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import JSON, Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -31,8 +30,10 @@ class GameStatus(str, enum.Enum):
 
 class User(Base):
     __tablename__ = "users"
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    __table_args__ = (UniqueConstraint("email", name="uq_users_email"),)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email: Mapped[str | None] = mapped_column(String(320))
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     combine_accounts: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     accounts: Mapped[list["ConnectedAccount"]] = relationship(back_populates="user")
@@ -41,7 +42,7 @@ class User(Base):
 class ConnectedAccount(Base):
     __tablename__ = "connected_accounts"
     __table_args__ = (UniqueConstraint("user_id", "platform", "username", name="uq_account_owner_platform_username"),)
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     platform: Mapped[Platform] = mapped_column(Enum(Platform, name="platform"))
     username: Mapped[str] = mapped_column(String(100))
@@ -57,7 +58,7 @@ class ConnectedAccount(Base):
 class Game(Base):
     __tablename__ = "games"
     __table_args__ = (UniqueConstraint("account_id", "platform_game_id", name="uq_game_account_platform_id"),)
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("connected_accounts.id", ondelete="CASCADE"), index=True)
     platform_game_id: Mapped[str] = mapped_column(String(255))
     game_url: Mapped[str | None] = mapped_column(Text)
@@ -79,7 +80,7 @@ class Game(Base):
 class GameAnalysis(Base):
     __tablename__ = "game_analysis"
     __table_args__ = (UniqueConstraint("game_id", "ply", name="uq_analysis_game_ply"),)
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     game_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("games.id", ondelete="CASCADE"), index=True)
     move_number: Mapped[int] = mapped_column(Integer)
     ply: Mapped[int] = mapped_column(Integer)
@@ -102,7 +103,7 @@ class GameAnalysis(Base):
 class Puzzle(Base):
     __tablename__ = "puzzles"
     __table_args__ = (UniqueConstraint("user_id", "position_fingerprint", name="uq_puzzle_user_position"),)
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     game_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("games.id", ondelete="CASCADE"), index=True)
     analysis_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("game_analysis.id", ondelete="CASCADE"), index=True)
@@ -121,7 +122,7 @@ class Puzzle(Base):
 
 class PuzzleAttempt(Base):
     __tablename__ = "puzzle_attempts"
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     puzzle_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("puzzles.id", ondelete="CASCADE"), index=True)
     submitted_move: Mapped[str | None] = mapped_column(String(8), nullable=True)

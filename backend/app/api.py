@@ -4,17 +4,47 @@ import httpx
 import chess
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from app.auth import current_user
+from app.auth import create_access_token, current_user, hash_password, verify_password
 from app.database import get_db
 from app.core.config import settings
 from app.models import ConnectedAccount, Game, GameAnalysis, GameStatus, Platform, Puzzle, PuzzleAttempt, SyncStatus, User
-from app.schemas import AccountConnect, AccountOut, AccountPreferencesIn, GameOut, GamePageOut, PuzzleAttemptIn, PuzzleAttemptOut, PuzzleSolutionOut
+from app.schemas import AccountConnect, AccountOut, AccountPreferencesIn, AuthResponse, GameOut, GamePageOut, LoginRequest, PuzzleAttemptIn, PuzzleAttemptOut, PuzzleSolutionOut, RegisterRequest
 from app.workers.import_tasks import import_account_games
 from app.integrations import chesscom
 from app.services.pgn_processor import opening_family, opening_line as pgn_opening_line, normalize_game_result
 
 router = APIRouter(prefix="/api/v1")
+
+
+@router.post("/auth/register", response_model=AuthResponse, status_code=201)
+def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+    existing = db.scalar(select(User).where(func.lower(User.email) == payload.email))
+    if existing:
+        raise HTTPException(status_code=409, detail="An account with this email already exists. Sign in instead.")
+    user = User(email=payload.email, password_hash=hash_password(payload.password))
+    db.add(user)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="An account with this email already exists. Sign in instead.") from exc
+    db.refresh(user)
+    return AuthResponse(access_token=create_access_token(user), email=user.email or "")
+
+
+@router.post("/auth/login", response_model=AuthResponse)
+def login(payload: LoginRequest, db: Session = Depends(get_db)):
+    user = db.scalar(select(User).where(func.lower(User.email) == payload.email))
+    if not user or not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Email or password is incorrect.")
+    return AuthResponse(access_token=create_access_token(user), email=user.email or "")
+
+
+@router.get("/auth/me")
+def me(user: User = Depends(current_user)):
+    return {"email": user.email or ""}
 
 
 def owned_account(db: Session, account_id: uuid.UUID, user: User):
