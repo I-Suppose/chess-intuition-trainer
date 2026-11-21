@@ -68,6 +68,42 @@ npm run dev
 
 Set `VITE_API_URL` to the API base URL with `/api/v1` appended. The frontend is a Vite-built React single-page app using React Router; its `VITE_*` settings are embedded at build time in Docker, so rebuild the frontend container after changing them.
 
+## Deploy to Fly.io
+
+The repository has separate `frontend/` and `backend/` folders, so Fly cannot detect an app from the repository root without an explicit Dockerfile. The root `Dockerfile` builds the React site and FastAPI service into one image; FastAPI serves the built site and API on the same origin. The `web` and Celery `worker` process groups are configured in `fly.toml`.
+
+1. Install `flyctl` and sign in with `fly auth login`.
+2. In `fly.toml`, replace `chess-intuition-trainer-change-me` with an app name that is available. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` under `[build.args]` to the public URL and anon key for your Supabase project. These Vite values are included in the browser build; never put the Supabase service-role key there.
+3. From the repository root, create the Fly app without deploying yet:
+
+   ```powershell
+   fly launch --no-deploy --name your-unique-chess-trainer-name
+   ```
+
+   Choose not to create an additional database if prompted; the app needs PostgreSQL and Redis configured as described next.
+4. Create or select a Fly Managed Postgres cluster and attach it to the app. Attaching sets `DATABASE_URL` for the app:
+
+   ```powershell
+   fly mpg create
+   fly mpg attach YOUR_CLUSTER_ID --app your-unique-chess-trainer-name
+   ```
+
+5. Create an Upstash Redis service from Fly's Redis section, then set its private connection URL and the Supabase server credentials as Fly secrets:
+
+   ```powershell
+   fly secrets set REDIS_URL="YOUR_PRIVATE_REDIS_URL" SUPABASE_URL="YOUR_SUPABASE_URL" SUPABASE_ANON_KEY="YOUR_SUPABASE_ANON_KEY" SUPABASE_SERVICE_ROLE_KEY="YOUR_SUPABASE_SERVICE_ROLE_KEY" --app your-unique-chess-trainer-name
+   ```
+
+6. Deploy from the repository root:
+
+   ```powershell
+   fly deploy --app your-unique-chess-trainer-name
+   fly status --app your-unique-chess-trainer-name
+   fly logs --app your-unique-chess-trainer-name
+   ```
+
+The Fly release command runs the database migrations before the web and worker processes start. The Dockerfile and Fly configuration are at the repository root so `fly launch` and `fly deploy` see them.
+
 ## Import behavior and configuration
 
 - Chess.com imports discover monthly archives newest-first and request only enough games to reach the configured limit.

@@ -1,6 +1,8 @@
 import logging
-from fastapi import FastAPI
+from pathlib import Path
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from app.core.config import settings
 from app.api import router
 from app.database import SessionLocal
@@ -34,3 +36,19 @@ def queue_existing_games_for_analysis():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# Fly serves the Vite build from this same app so the browser can call the API
+# on the same origin. Unknown non-API paths return index.html for React Router.
+frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if frontend_dist.is_dir():
+    @app.get("/{asset_path:path}", include_in_schema=False)
+    def serve_frontend(asset_path: str):
+        if asset_path == "api/v1" or asset_path.startswith("api/v1/"):
+            raise HTTPException(status_code=404, detail="Not found")
+
+        root = frontend_dist.resolve()
+        requested = (root / asset_path).resolve()
+        if root in requested.parents and requested.is_file():
+            return FileResponse(requested)
+        return FileResponse(root / "index.html")
