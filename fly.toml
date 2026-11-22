@@ -8,7 +8,7 @@ primary_region = "sin"
     VITE_API_URL = "/api/v1"
 
 [deploy]
-  release_command = "alembic upgrade head"
+  release_command = "python -m alembic upgrade head"
 
 [processes]
   web = "uvicorn app.main:app --host 0.0.0.0 --port 8000"
