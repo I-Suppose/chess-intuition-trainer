@@ -1,8 +1,9 @@
 import { supabase } from './supabase';
 
-// Production requests use Vercel's same-origin rewrite to the Fly API. Local
-// Vite development proxies this path to localhost:8000 (see vite.config.ts).
-export const API = import.meta.env.VITE_API_URL || '/api/v1';
+// Local Vite development proxies this path to localhost:8000 (see vite.config.ts).
+// Production uses the same-origin Vercel backend service. This intentionally
+// ignores a stale VITE_API_URL value that may still point at an old host.
+export const API = import.meta.env.PROD ? '/api/v1' : (import.meta.env.VITE_API_URL || '/api/v1');
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const client = supabase();
   const { data } = client ? await client.auth.getSession() : { data: { session: null } };

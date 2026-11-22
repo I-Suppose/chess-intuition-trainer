@@ -68,50 +68,14 @@ npm run dev
 
 Set `VITE_API_URL` to the API base URL with `/api/v1` appended. The frontend is a Vite-built React single-page app using React Router; its `VITE_*` settings are embedded at build time in Docker, so rebuild the frontend container after changing them.
 
-## Deploy to Fly.io
-
-The repository has separate `frontend/` and `backend/` folders, so Fly cannot detect an app from the repository root without an explicit Dockerfile. The root `Dockerfile` builds the React site and FastAPI service into one image; FastAPI serves the built site and API on the same origin. The `web` and Celery `worker` process groups are configured in `fly.toml`.
-
-1. Install `flyctl` and sign in with `fly auth login`.
-2. In `fly.toml`, replace `chess-intuition-trainer-change-me` with an app name that is available. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` under `[build.args]` to the public URL and anon key for your Supabase project. These Vite values are included in the browser build; never put the Supabase service-role key there.
-3. From the repository root, create the Fly app without deploying yet if you have not already created it:
-
-   ```powershell
-   fly launch --no-deploy --name chess-intuition-trainer
-   ```
-
-   Choose not to create an additional database if prompted; the app needs PostgreSQL and Redis configured as described next.
-4. Create or select a Fly Managed Postgres cluster and attach it to the app. Attaching sets `DATABASE_URL` for the app:
-
-   ```powershell
-   fly mpg create
-   fly mpg attach YOUR_CLUSTER_ID --app chess-intuition-trainer
-   ```
-
-5. Create an Upstash Redis service from Fly's Redis section, then set its private connection URL and the Supabase server credentials as Fly secrets:
-
-   ```powershell
-   fly secrets set REDIS_URL="YOUR_PRIVATE_REDIS_URL" SUPABASE_URL="YOUR_SUPABASE_URL" SUPABASE_ANON_KEY="YOUR_SUPABASE_ANON_KEY" SUPABASE_SERVICE_ROLE_KEY="YOUR_SUPABASE_SERVICE_ROLE_KEY" --app chess-intuition-trainer
-   ```
-
-6. Deploy from the repository root:
-
-   ```powershell
-   fly deploy --app chess-intuition-trainer
-   fly status --app chess-intuition-trainer
-   fly logs --app chess-intuition-trainer
-   ```
-
-Deploy from this repository's root and omit `--image`: that makes Fly build the root Dockerfile, which contains both the React frontend and the FastAPI/Alembic backend. Passing `--image registry.fly.io/...` deploys that prebuilt image instead of building this source tree. The Fly release command runs database migrations before the web and worker processes start.
-
 ## Import behavior and configuration
 
 - Chess.com imports discover monthly archives newest-first and request only enough games to reach the configured limit.
 - Lichess imports use the official game export endpoint, one request per sync, with bounded retry for rate limits.
 - Games with unknown dates keep a null date and appear after dated games; the application never invents a date.
 - `POST /api/v1/games/import-older?account_id=<uuid>` requests the next older page for a connected account.
-- `POST /api/v1/accounts/{account_id}/sync` queues a refresh. Background work requires Redis and a running Celery worker.
-- `INITIAL_GAME_IMPORT_LIMIT` defaults to 100. Pending games are analyzed automatically after import and when the API starts. The fast Stockfish scan runs on each user decision; positions that look important receive the configured deeper analysis.
+- `POST /api/v1/accounts/{account_id}/sync` queues a refresh. Locally, background work requires Redis and a running Celery worker. On Vercel it uses Vercel Queues subscribers.
+- `INITIAL_GAME_IMPORT_LIMIT` defaults to 100. Pending games are analyzed automatically after import. The fast Stockfish scan runs on each user decision; positions that look important receive the configured deeper analysis.
 - `STOCKFISH_SCAN_TIME_LIMIT` controls the quick scan per decision. `STOCKFISH_DEPTH` and `STOCKFISH_TIME_LIMIT` control deeper candidate analysis. Set `STOCKFISH_PATH` if Stockfish is not on the executable path.
 - `/api/v1/openings` summarizes opening families and the first 12 half-moves from the actual PGNs.
 - `/api/v1/games/{game_id}/analysis` returns evaluated user decision positions. `/api/v1/puzzles` lists puzzles in category priority order, with newer games first within a category.
@@ -119,8 +83,14 @@ Deploy from this repository's root and omit `--image`: that makes Fly build the 
 
 See `.env.example` for the complete configuration list. Never commit `.env` or place the Supabase service role key in a `VITE_` variable; Vite exposes those values to the browser.
 
-## Deploy the frontend to Vercel
+## Deploy to Vercel
 
-The frontend is a React/Vite static site in `frontend/`; the FastAPI API and PostgreSQL-backed application data run separately on Fly.io. The root and `frontend/` Vercel configurations build the frontend and proxy `/api/v1/*` requests to `https://chess-intuition-trainer.fly.dev/api/v1/*`.
+The root `vercel.json` deploys the React/Vite frontend and FastAPI backend as Vercel Services. Set the Vercel project Root Directory to the repository root so this configuration is used. Browser calls to `/api/v1/*` are routed to the backend on the same Vercel domain, so `VITE_API_URL` is only needed for local development. Enable Vercel Queues for the project to run the Celery import and analysis tasks.
 
-Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in Vercel's Production environment for browser sign-in, then redeploy. Remove `DATABASE_URL` from Vercel; it is a backend-only setting. On Fly, configure `DATABASE_URL` with a reachable PostgreSQL connection string, plus `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `REDIS_URL`. Keep the service-role key private. The app uses Supabase for authentication and PostgreSQL for game, analysis, and puzzle data.
+Set these variables in Vercel Project Settings → Environment Variables, then redeploy:
+
+- `DATABASE_URL`: a reachable PostgreSQL URL for the app data. Use your hosted Supabase Postgres connection string (prefer the Supabase pooler URL for serverless connections), not a local `localhost` URL. This is a backend-only secret.
+- `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`: backend Supabase authentication configuration; keep the service-role key private.
+- `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`: public browser sign-in configuration. These two values are embedded in the frontend build.
+
+Remove any old `VITE_API_URL` value in Vercel; production now always calls the same-origin `/api/v1` route. The backend runs Alembic migrations during a production Vercel build. Vercel Queues replaces the production Redis broker; `REDIS_URL` remains for local development. For game analysis, the backend also needs a Stockfish executable available at `STOCKFISH_PATH` (or on PATH). Verify the Vercel deployment logs and `/health` endpoint after deploying; `/health` checks that the API service is reachable, while app data requests additionally require a valid `DATABASE_URL` and migrated schema.

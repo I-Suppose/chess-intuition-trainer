@@ -12,7 +12,7 @@ ENV VITE_API_URL=${VITE_API_URL} \
     VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
 RUN npm run build
 
-# Run FastAPI and serve the built React SPA from the same Fly app.
+# Run FastAPI and serve the built React SPA from the same-origin app.
 FROM python:3.12-slim
 WORKDIR /app
 COPY backend/requirements.txt ./requirements.txt

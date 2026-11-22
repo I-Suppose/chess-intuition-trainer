@@ -1,12 +1,26 @@
 {
-  "installCommand": "npm --prefix frontend ci --include=dev",
-  "buildCommand": "npm --prefix frontend run build",
-  "outputDirectory": "frontend/dist",
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "frontend": {
+      "root": "frontend/"
+    },
+    "backend": {
+      "root": "backend/",
+      "entrypoint": "main:app"
+    }
+  },
   "rewrites": [
     {
-      "source": "/api/v1/:path*",
-      "destination": "https://chess-intuition-trainer.fly.dev/api/v1/:path*"
+      "source": "/health",
+      "destination": { "service": "backend" }
     },
-    { "source": "/(.*)", "destination": "/index.html" }
+    {
+      "source": "/api/v1/(.*)",
+      "destination": { "service": "backend" }
+    },
+    {
+      "source": "/(.*)",
+      "destination": { "service": "frontend" }
+    }
   ]
 }

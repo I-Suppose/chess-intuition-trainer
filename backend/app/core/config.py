@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     @field_validator("database_url", mode="before")
     @classmethod
     def use_psycopg3_driver(cls, value: str) -> str:
-        # Fly Managed Postgres supplies a standard postgres URL. This project
-        # uses psycopg 3, so select its SQLAlchemy dialect explicitly.
+        # Supabase and other hosted Postgres providers commonly supply a
+        # standard postgres URL. This project uses psycopg 3.
         if value.startswith("postgres://"):
             return value.replace("postgres://", "postgresql+psycopg://", 1)
         if value.startswith("postgresql://"):

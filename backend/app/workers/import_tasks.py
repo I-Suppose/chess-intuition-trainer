@@ -1,9 +1,10 @@
 import asyncio
+import hashlib
+import os
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import select
-from redis import Redis
-from app.database import SessionLocal
+from sqlalchemy import select, text
+from app.database import SessionLocal, engine
 from app.models import ConnectedAccount, Game, GameStatus, Platform, SyncStatus
 from app.core.config import settings
 from app.workers.celery_app import celery_app
@@ -65,15 +66,45 @@ def _save(account_id: str, older: bool = False, limit: int | None = None):
 
 @celery_app.task(bind=True, autoretry_for=(OSError, TimeoutError), retry_backoff=True, retry_kwargs={"max_retries": 3})
 def import_account_games(self, account_id: str, older: bool = False, limit: int | None = None):
-    lock_client = Redis.from_url(settings.redis_url)
-    lock = lock_client.lock(f"account-import:{account_id}", timeout=1200, blocking_timeout=0)
+    on_vercel = bool(os.getenv("VERCEL") or os.getenv("VERCEL_ENV"))
+    lock_client = None
+    lock = None
+    lock_connection = None
+    if on_vercel:
+        # Session advisory locks work across Vercel function instances without
+        # a separate, always-on Redis service.
+        key = int.from_bytes(hashlib.sha256(account_id.encode("utf-8")).digest()[:8], "big", signed=True)
+        lock_connection = engine.connect()
+        try:
+            acquired = lock_connection.execute(text("SELECT pg_try_advisory_lock(:key)"), {"key": key}).scalar()
+        except Exception:
+            lock_connection.invalidate()
+            lock_connection.close()
+            raise
+        if not acquired:
+            lock_connection.close()
+            return {"status": "already_running"}
+    else:
+        from redis import Redis
+        lock_client = Redis.from_url(settings.redis_url)
+        lock = lock_client.lock(f"account-import:{account_id}", timeout=1200, blocking_timeout=0)
     try:
-        if not lock.acquire():
+        if lock is not None and not lock.acquire():
             return {"status": "already_running"}
         _save(account_id, older, limit)
     except RateLimitError as exc:
         raise self.retry(exc=exc, countdown=min(exc.retry_after, 900), max_retries=3)
     finally:
-        if lock.owned():
+        if lock is not None and lock.owned():
             lock.release()
-        lock_client.close()
+        if lock_client is not None:
+            lock_client.close()
+        if lock_connection is not None:
+            try:
+                lock_connection.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
+            except Exception:
+                # Closing a pooled connection alone would not clear a
+                # session-level advisory lock if the unlock query failed.
+                lock_connection.invalidate()
+            finally:
+                lock_connection.close()
