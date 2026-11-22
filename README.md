@@ -72,7 +72,7 @@ The MySQL database must be hosted or otherwise reachable from Fly. `localhost` o
 
 This repository keeps the React/Vite frontend in `frontend/` and the FastAPI API in `backend/`. The root and frontend Vercel configuration files both install frontend development dependencies explicitly, run the npm build script, and publish the Vite `dist` output. For a standard Vercel project, keep **Root Directory** set to the repository root (`.`). If the project's Root Directory is set to `frontend`, Vercel uses `frontend/vercel.json` instead.
 
-Add `VITE_API_URL` in Vercel's project environment variables with the public API base, for example `https://chess-intuition-trainer.fly.dev/api/v1`, then redeploy. The API must be running separately (for example on Fly.io); Vercel is serving the static React frontend. Add the Vercel site's exact `https://...vercel.app` origin to the backend's `CORS_ORIGINS` setting so browser API requests are allowed. Vite embeds `VITE_API_URL` during the build, so changing it requires a redeploy.
+The Vercel configuration proxies `/api/v1/*` to the Fly API at `https://chess-intuition-trainer.fly.dev/api/v1/*`; the API must be running there. Do not set `DATABASE_URL` in Vercel: it is used by the backend only. Set it as a Fly secret to a MySQL server reachable from Fly. A local URL such as `127.0.0.1` points to the Fly machine itself, not your computer. Local Vite development proxies `/api/v1/*` to `http://127.0.0.1:8000` unless `VITE_API_URL` is explicitly set.
 
 ## Import and analysis configuration
 

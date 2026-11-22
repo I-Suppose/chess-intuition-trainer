@@ -1,6 +1,8 @@
 import { getAccessToken } from './auth';
 
-export const API = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+// Production requests use Vercel's same-origin rewrite to the Fly API. Local
+// Vite development proxies this path to localhost:8000 (see vite.config.ts).
+export const API = import.meta.env.VITE_API_URL || '/api/v1';
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = getAccessToken();
   const response = await fetch(`${API}${path}`, {

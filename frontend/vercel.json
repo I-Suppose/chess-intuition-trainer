@@ -3,6 +3,10 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "rewrites": [
+    {
+      "source": "/api/v1/:path*",
+      "destination": "https://chess-intuition-trainer.fly.dev/api/v1/:path*"
+    },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
