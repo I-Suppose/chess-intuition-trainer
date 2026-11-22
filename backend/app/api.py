@@ -1,4 +1,5 @@
 import uuid
+import logging
 from datetime import datetime, timezone
 import httpx
 import chess
@@ -15,6 +16,7 @@ from app.integrations import chesscom
 from app.services.pgn_processor import opening_family, opening_line as pgn_opening_line, normalize_game_result
 
 router = APIRouter(prefix="/api/v1")
+logger = logging.getLogger(__name__)
 
 
 def owned_account(db: Session, account_id: uuid.UUID, user: User):
@@ -26,8 +28,11 @@ def owned_account(db: Session, account_id: uuid.UUID, user: User):
 
 def queue_import(account_id: uuid.UUID, older: bool = False, limit: int | None = None):
     try:
-        return import_account_games.delay(str(account_id), older=older, limit=limit)
+        task = import_account_games.delay(str(account_id), older=older, limit=limit)
+        logger.info("Queued game import task %s for account %s", task.id, account_id)
+        return task
     except Exception as exc:
+        logger.exception("Failed to publish game import task for account %s", account_id)
         raise HTTPException(status_code=503, detail="The game import queue is unavailable. Your account is saved; please retry shortly.") from exc
 
 
@@ -65,6 +70,9 @@ def update_account_preferences(payload: AccountPreferencesIn, db: Session = Depe
 @router.post("/accounts/connect", response_model=AccountOut, status_code=202)
 async def connect(payload: AccountConnect, db: Session = Depends(get_db), user: User = Depends(current_user)):
     username = payload.username.strip()
+    # current_user has already loaded the user in this session. Release its
+    # read transaction before waiting on Chess.com or Lichess over HTTP.
+    db.commit()
     try:
         async with httpx.AsyncClient(timeout=15, headers=chesscom.HEADERS if payload.platform == Platform.chesscom else {"User-Agent": "ChessIntuitionTrainer/0.1"}) as client:
             url = f"{chesscom.BASE}/player/{username}" if payload.platform == Platform.chesscom else f"https://lichess.org/api/user/{username}"

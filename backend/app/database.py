@@ -10,8 +10,11 @@ class Base(DeclarativeBase):
 engine = create_engine(
     settings.database_url,
     pool_pre_ping=True,
-    pool_size=1,
-    max_overflow=0,
+    # Vercel can serve several API requests while an import worker is also
+    # active in a warm instance. Leave enough connections for that overlap.
+    pool_size=3,
+    max_overflow=2,
+    pool_timeout=15,
     pool_recycle=1800,
     # Supabase's transaction pooler does not retain prepared statements
     # between transactions. Disabling psycopg auto-prepare is compatible with

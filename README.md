@@ -94,3 +94,7 @@ Set these variables in Vercel Project Settings → Environment Variables, then r
 - `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`: public browser sign-in configuration. These two values are embedded in the frontend build.
 
 Remove any old `VITE_API_URL` value in Vercel; production now always calls the same-origin `/api/v1` route. The backend runs Alembic migrations during a production Vercel build. Vercel Queues replaces the production Redis broker; `REDIS_URL` remains for local development. For game analysis, the backend also needs a Stockfish executable available at `STOCKFISH_PATH` (or on PATH). Verify the Vercel deployment logs and `/health` endpoint after deploying; `/health` checks that the API service is reachable, while app data requests additionally require a valid `DATABASE_URL` and migrated schema.
+
+## Continuous integration
+
+GitHub Actions runs the frontend production build and backend/configuration checks for pull requests and pushes to `main` (`.github/workflows/ci.yml`). Vercel's Git integration continues to build and deploy the connected branch. To inspect API runtime errors with the current Vercel CLI, run `vercel logs runtime --query 'level:error'` from the linked project directory; the API logs queue publish failures and unhandled exceptions without logging credentials.
