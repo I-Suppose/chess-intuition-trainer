@@ -43,4 +43,4 @@ jobs:
       - run: python -c "from main import app; assert app.title == 'Chess Intuition Trainer API'"
       - name: Validate Vercel and Python project configuration
         working-directory: .
-        run: python -c "import json, tomllib; json.load(open('vercel.json', encoding='utf-8')); tomllib.load(open('backend/pyproject.toml', 'rb'))"
+        run: python -c "import json, tomllib; config=json.load(open('vercel.json', encoding='utf-8')); pyproject=tomllib.load(open('backend/pyproject.toml', 'rb')); assert config['services']['backend']['entrypoint']=='pyproject.toml', 'Vercel backend must build the declared Celery subscriber'; assert pyproject['tool']['vercel']['subscribers'], 'Vercel game import and analysis worker subscriber is missing'"

@@ -85,7 +85,7 @@ See `.env.example` for the complete configuration list. Never commit `.env` or p
 
 ## Deploy to Vercel
 
-The root `vercel.json` deploys the React/Vite frontend and FastAPI backend as Vercel Services. Set the Vercel project Root Directory to the repository root so this configuration is used. Browser calls to `/api/v1/*` are routed to the backend on the same Vercel domain, so `VITE_API_URL` is only needed for local development. Enable Vercel Queues for the project to run the Celery import and analysis tasks.
+The root `vercel.json` deploys the React/Vite frontend and FastAPI backend as Vercel Services. Set the Vercel project Root Directory to the repository root so this configuration is used. Browser calls to `/api/v1/*` are routed to the backend on the same Vercel domain, so `VITE_API_URL` is only needed for local development. The backend service uses `backend/pyproject.toml` as its entrypoint so Vercel builds both the FastAPI app and the Celery queue subscriber declared there; the subscriber processes game imports and analysis jobs.
 
 Set these variables in Vercel Project Settings → Environment Variables, then redeploy:
 
@@ -93,7 +93,7 @@ Set these variables in Vercel Project Settings → Environment Variables, then r
 - `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`: backend Supabase authentication configuration; keep the service-role key private.
 - `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`: public browser sign-in configuration. These two values are embedded in the frontend build.
 
-Remove any old `VITE_API_URL` value in Vercel; production now always calls the same-origin `/api/v1` route. The backend runs Alembic migrations during a production Vercel build. Vercel Queues replaces the production Redis broker; `REDIS_URL` remains for local development. For game analysis, the backend also needs a Stockfish executable available at `STOCKFISH_PATH` (or on PATH). Verify the Vercel deployment logs and `/health` endpoint after deploying; `/health` checks that the API service is reachable, while app data requests additionally require a valid `DATABASE_URL` and migrated schema.
+Remove any old `VITE_API_URL` value in Vercel; production now always calls the same-origin `/api/v1` route. The backend runs Alembic migrations during a production Vercel build. Vercel Queues replaces the production Redis broker; `REDIS_URL` remains for local development. The backend build bundles the pinned official Stockfish 19 Linux x86-64 executable and its license for analysis and puzzle generation; a configured `STOCKFISH_PATH` takes precedence. Verify the Vercel deployment logs and `/health` endpoint after deploying; `/health` checks that the API service is reachable, while app data requests additionally require a valid `DATABASE_URL` and migrated schema.
 
 ## Continuous integration
 

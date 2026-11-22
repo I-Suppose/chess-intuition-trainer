@@ -1,5 +1,6 @@
 import hashlib
 import io
+from pathlib import Path
 import shutil
 import chess
 import chess.engine
@@ -28,7 +29,8 @@ PIECE_VALUE_CP = {chess.PAWN: 100, chess.KNIGHT: 320, chess.BISHOP: 330, chess.R
 
 
 def _engine_path() -> str:
-    candidates = [settings.stockfish_path, shutil.which("stockfish"), "/usr/games/stockfish", "/usr/bin/stockfish"]
+    bundled_engine = Path(__file__).resolve().parents[2] / "bin" / "stockfish"
+    candidates = [settings.stockfish_path, str(bundled_engine), shutil.which("stockfish"), "/usr/games/stockfish", "/usr/bin/stockfish"]
     for candidate in candidates:
         if candidate and shutil.which(candidate):
             return candidate
