@@ -5,6 +5,7 @@ import chess
 import chess.engine
 import chess.pgn
 from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.core.config import settings
 from app.database import SessionLocal
 from app.models import ConnectedAccount, Game, GameAnalysis, GameStatus, Puzzle
@@ -246,12 +247,12 @@ def analyse_game(game_id: str):
                 duplicate = fingerprint in seen_fingerprints or db.scalar(select(Puzzle.id).where(Puzzle.user_id == account.user_id, Puzzle.position_fingerprint == fingerprint))
                 seen_fingerprints.add(fingerprint)
                 if not duplicate:
-                    db.add(Puzzle(user_id=account.user_id, game_id=game.id, analysis_id=analysis.id,
-                                  position_fingerprint=fingerprint, fen=record["fen"], side_to_move=record["side_to_move"],
-                                  puzzle_category=record["category"], priority=record["priority"], solution_uci=record["best_move_uci"],
-                                  accepted_solutions=record["accepted_solutions"], principal_variation=record["principal_variation"],
-                                  explanation=_explanation(record, game), game_move_number=record["move_number"]))
-                    db.flush()
+                    statement = pg_insert(Puzzle).values(user_id=account.user_id, game_id=game.id, analysis_id=analysis.id,
+                                                        position_fingerprint=fingerprint, fen=record["fen"], side_to_move=record["side_to_move"],
+                                                        puzzle_category=record["category"], priority=record["priority"], solution_uci=record["best_move_uci"],
+                                                        accepted_solutions=record["accepted_solutions"], principal_variation=record["principal_variation"],
+                                                        explanation=_explanation(record, game), game_move_number=record["move_number"])
+                    db.execute(statement.on_conflict_do_nothing(constraint="uq_puzzle_user_position"))
         game.analysis_status = GameStatus.analysed
         db.commit()
     except Exception:

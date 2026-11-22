@@ -1,30 +1,45 @@
 # Chess Intuition Trainer
 
-A React and FastAPI application for importing public Chess.com and Lichess games and turning the player's own turning points into chess training puzzles. Accounts and application data are stored in MySQL; authentication is handled by the FastAPI backend.
+A web application for importing public Chess.com and Lichess games and turning the player's own turning points into chess training puzzles.
 
-## Start locally with MySQL
+## What is implemented
 
-1. Ensure MySQL Server is running on `127.0.0.1:3306`. MySQL Workbench is a client; the application connects to the MySQL Server service.
-2. In Workbench, create the application's database once:
+- Supabase email/password sign-up and sign-in.
+- Owner-scoped FastAPI endpoints using the signed-in Supabase user.
+- Real public profile validation through the Chess.com Published Data API and Lichess API.
+- Background game imports through Celery and Redis; latest 100 games per account on first import.
+- PGN and game metadata storage in PostgreSQL, with duplicate prevention and newest-first game browsing.
+- Stockfish UCI analysis of the connected player's decisions, processed newest game first in the background.
+- Turning point classification and puzzles generated only from imported game positions; solutions use legal engine moves and verified close alternatives.
+- Opening repertoire and move line summaries derived from the user's imported PGNs.
+- Puzzle solving on a legal interactive chessboard, recorded attempts, solution line playback, and priority/category filters.
+- Refresh, older-game import API, sync status, and account disconnect that preserves imported game history.
+- Responsive dashboard, account connection, game library, and settings screens.
+- Light and dark theme selection saved in the browser.
+- Alembic migrations and Docker Compose development services, with Stockfish installed in the backend image.
 
-   ```sql
-   CREATE DATABASE chess_trainer CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-   ```
+Full application account deletion and advanced coach features from the PRD are not implemented. Puzzle positions are created from actual imported PGNs and Stockfish analysis; no general puzzle feed or sample positions are used.
 
-3. Copy `.env.example` to `.env`. Set the MySQL username and password in both `DATABASE_URL` and `DATABASE_URL_DOCKER`. `DATABASE_URL` is for running Python on Windows; Docker containers use `DATABASE_URL_DOCKER` and reach the Windows host through `host.docker.internal`. Set `JWT_SECRET_KEY` to a long random value. Keep `.env` private.
-4. Start the app:
+## Start locally
+
+1. Install Docker Desktop, Node.js 20+, and Python 3.12+ (or use the included containers for Python and Node).
+2. Create a Supabase project and enable email/password authentication.
+3. Copy `.env.example` to `.env` and set `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `VITE_SUPABASE_URL`, and `VITE_SUPABASE_ANON_KEY`. The public and server URLs should refer to the same Supabase project. Keep the service role key private.
+4. From this directory, start the app:
 
    ```powershell
+   Copy-Item .env.example .env
+   # Edit .env and add your Supabase project values
    docker compose up --build
    ```
 
-5. Open [http://localhost:3000](http://localhost:3000), create an account, and connect Chess.com or Lichess from **Accounts**.
+5. Open [http://localhost:3000](http://localhost:3000), create an account, then connect Chess.com or Lichess from **Accounts**.
 
-Redis is started by Compose. MySQL must be running outside Compose. The API is at [http://localhost:8000](http://localhost:8000), OpenAPI docs at [http://localhost:8000/docs](http://localhost:8000/docs), and health check at [http://localhost:8000/health](http://localhost:8000/health).
+The API is at [http://localhost:8000](http://localhost:8000), OpenAPI docs at [http://localhost:8000/docs](http://localhost:8000/docs), and health check at [http://localhost:8000/health](http://localhost:8000/health).
 
-## Run web and API outside Docker
+## Run the web and API outside Docker
 
-Configure `DATABASE_URL` in `.env` for your local MySQL Server, then install dependencies and apply migrations:
+Start PostgreSQL and Redis, configure `.env`, and run. The Compose API and worker override the host-only database and Redis URLs with the internal `db` and `redis` service addresses; the browser still uses `http://localhost:8000/api/v1` by default.
 
 ```powershell
 cd backend
@@ -35,7 +50,7 @@ alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-Run a Redis server and a Celery worker in another backend terminal:
+In a second backend terminal, start the worker:
 
 ```powershell
 cd backend
@@ -43,7 +58,7 @@ cd backend
 celery -A app.workers.celery_app worker --loglevel=INFO --concurrency=2
 ```
 
-Run the frontend in another terminal:
+In another terminal, start the frontend:
 
 ```powershell
 cd frontend
@@ -51,36 +66,61 @@ npm install
 npm run dev
 ```
 
-The Vite frontend uses `VITE_API_URL` as its API base URL. Account creation and sign-in use the backend `/auth/register` and `/auth/login` endpoints; password hashes and application records are stored in MySQL.
-
-## Existing accounts and data
-
-Supabase passwords cannot be copied into this app because their password hashes are not available to it. Users need to create a new account after the switch. Existing PostgreSQL game data is not copied automatically; retain its database backup and import the public games again after creating the new account. The MySQL migration creates the schema and does not transfer or delete the old PostgreSQL database.
+Set `VITE_API_URL` to the API base URL with `/api/v1` appended. The frontend is a Vite-built React single-page app using React Router; its `VITE_*` settings are embedded at build time in Docker, so rebuild the frontend container after changing them.
 
 ## Deploy to Fly.io
 
-The root Dockerfile builds the React site and FastAPI backend into one image. Set Fly secrets for a MySQL server reachable from Fly and Redis before deployment:
+The repository has separate `frontend/` and `backend/` folders, so Fly cannot detect an app from the repository root without an explicit Dockerfile. The root `Dockerfile` builds the React site and FastAPI service into one image; FastAPI serves the built site and API on the same origin. The `web` and Celery `worker` process groups are configured in `fly.toml`.
 
-```sh
-fly secrets set DATABASE_URL='mysql+pymysql://USER:PASSWORD@MYSQL_HOST:3306/chess_trainer?charset=utf8mb4' JWT_SECRET_KEY='LONG_RANDOM_SECRET' REDIS_URL='YOUR_PRIVATE_REDIS_URL' --app chess-intuition-trainer
-fly deploy --app chess-intuition-trainer
-```
+1. Install `flyctl` and sign in with `fly auth login`.
+2. In `fly.toml`, replace `chess-intuition-trainer-change-me` with an app name that is available. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` under `[build.args]` to the public URL and anon key for your Supabase project. These Vite values are included in the browser build; never put the Supabase service-role key there.
+3. From the repository root, create the Fly app without deploying yet if you have not already created it:
 
-The MySQL database must be hosted or otherwise reachable from Fly. `localhost` on a Fly machine refers to that machine, not the MySQL Server on your personal computer. `DATABASE_URL` may use `mysql+pymysql://` or a provider's standard `mysql://` scheme. Do not put database credentials or JWT secrets in Vite build variables. Fly's release command runs Alembic migrations before starting the app.
+   ```powershell
+   fly launch --no-deploy --name chess-intuition-trainer
+   ```
 
-## Deploy the frontend to Vercel
+   Choose not to create an additional database if prompted; the app needs PostgreSQL and Redis configured as described next.
+4. Create or select a Fly Managed Postgres cluster and attach it to the app. Attaching sets `DATABASE_URL` for the app:
 
-This repository keeps the React/Vite frontend in `frontend/` and the FastAPI API in `backend/`. The root and frontend Vercel configuration files both install frontend development dependencies explicitly, run the npm build script, and publish the Vite `dist` output. For a standard Vercel project, keep **Root Directory** set to the repository root (`.`). If the project's Root Directory is set to `frontend`, Vercel uses `frontend/vercel.json` instead.
+   ```powershell
+   fly mpg create
+   fly mpg attach YOUR_CLUSTER_ID --app chess-intuition-trainer
+   ```
 
-The Vercel configuration proxies `/api/v1/*` to the Fly API at `https://chess-intuition-trainer.fly.dev/api/v1/*`; the API must be running there. Do not set `DATABASE_URL` in Vercel: it is used by the backend only. Set it as a Fly secret to a MySQL server reachable from Fly. A local URL such as `127.0.0.1` points to the Fly machine itself, not your computer. Local Vite development proxies `/api/v1/*` to `http://127.0.0.1:8000` unless `VITE_API_URL` is explicitly set.
+5. Create an Upstash Redis service from Fly's Redis section, then set its private connection URL and the Supabase server credentials as Fly secrets:
 
-## Import and analysis configuration
+   ```powershell
+   fly secrets set REDIS_URL="YOUR_PRIVATE_REDIS_URL" SUPABASE_URL="YOUR_SUPABASE_URL" SUPABASE_ANON_KEY="YOUR_SUPABASE_ANON_KEY" SUPABASE_SERVICE_ROLE_KEY="YOUR_SUPABASE_SERVICE_ROLE_KEY" --app chess-intuition-trainer
+   ```
+
+6. Deploy from the repository root:
+
+   ```powershell
+   fly deploy --app chess-intuition-trainer
+   fly status --app chess-intuition-trainer
+   fly logs --app chess-intuition-trainer
+   ```
+
+Deploy from this repository's root and omit `--image`: that makes Fly build the root Dockerfile, which contains both the React frontend and the FastAPI/Alembic backend. Passing `--image registry.fly.io/...` deploys that prebuilt image instead of building this source tree. The Fly release command runs database migrations before the web and worker processes start.
+
+## Import behavior and configuration
 
 - Chess.com imports discover monthly archives newest-first and request only enough games to reach the configured limit.
 - Lichess imports use the official game export endpoint, one request per sync, with bounded retry for rate limits.
-- `INITIAL_GAME_IMPORT_LIMIT` defaults to 100. Background work requires Redis and a running Celery worker.
+- Games with unknown dates keep a null date and appear after dated games; the application never invents a date.
+- `POST /api/v1/games/import-older?account_id=<uuid>` requests the next older page for a connected account.
+- `POST /api/v1/accounts/{account_id}/sync` queues a refresh. Background work requires Redis and a running Celery worker.
+- `INITIAL_GAME_IMPORT_LIMIT` defaults to 100. Pending games are analyzed automatically after import and when the API starts. The fast Stockfish scan runs on each user decision; positions that look important receive the configured deeper analysis.
 - `STOCKFISH_SCAN_TIME_LIMIT` controls the quick scan per decision. `STOCKFISH_DEPTH` and `STOCKFISH_TIME_LIMIT` control deeper candidate analysis. Set `STOCKFISH_PATH` if Stockfish is not on the executable path.
-- `/api/v1/openings` summarizes opening families and move lines from imported PGNs.
-- Puzzle positions are generated from actual imported games and engine analysis.
+- `/api/v1/openings` summarizes opening families and the first 12 half-moves from the actual PGNs.
+- `/api/v1/games/{game_id}/analysis` returns evaluated user decision positions. `/api/v1/puzzles` lists puzzles in category priority order, with newer games first within a category.
+- Puzzle attempts are checked against legal moves and the engine's best move plus alternatives within 0.25 pawns. The solution is available after an attempt.
 
-See `.env.example` for the configuration names. Do not commit `.env`.
+See `.env.example` for the complete configuration list. Never commit `.env` or place the Supabase service role key in a `VITE_` variable; Vite exposes those values to the browser.
+
+## Deploy the frontend to Vercel
+
+The frontend is a React/Vite static site in `frontend/`; the FastAPI API and PostgreSQL-backed application data run separately on Fly.io. The root and `frontend/` Vercel configurations build the frontend and proxy `/api/v1/*` requests to `https://chess-intuition-trainer.fly.dev/api/v1/*`.
+
+Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in Vercel's Production environment for browser sign-in, then redeploy. Remove `DATABASE_URL` from Vercel; it is a backend-only setting. On Fly, configure `DATABASE_URL` with a reachable PostgreSQL connection string, plus `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `REDIS_URL`. Keep the service-role key private. The app uses Supabase for authentication and PostgreSQL for game, analysis, and puzzle data.

@@ -9,12 +9,8 @@ depends_on = None
 
 
 def upgrade():
-    bind = op.get_bind()
-    columns = {column["name"]: column for column in sa.inspect(bind).get_columns("puzzle_attempts")}
-    if "revealed" not in columns:
-        op.add_column("puzzle_attempts", sa.Column("revealed", sa.Boolean(), nullable=False, server_default=sa.false()))
-    if not columns["submitted_move"]["nullable"]:
-        op.alter_column("puzzle_attempts", "submitted_move", existing_type=sa.String(length=8), nullable=True)
+    op.add_column("puzzle_attempts", sa.Column("revealed", sa.Boolean(), nullable=False, server_default=sa.false()))
+    op.alter_column("puzzle_attempts", "submitted_move", existing_type=sa.String(length=8), nullable=True)
 
 
 def downgrade():
