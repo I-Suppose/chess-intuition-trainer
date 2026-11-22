@@ -20,7 +20,9 @@ def upgrade():
             ORDER BY user_id, connected_at DESC
         )
     """)
-    op.add_column("users", sa.Column("combine_accounts", sa.Boolean(), nullable=False, server_default=sa.false()))
+    columns = {column["name"] for column in sa.inspect(op.get_bind()).get_columns("users")}
+    if "combine_accounts" not in columns:
+        op.add_column("users", sa.Column("combine_accounts", sa.Boolean(), nullable=False, server_default=sa.false()))
 
 
 def downgrade():
